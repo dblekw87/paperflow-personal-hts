@@ -1,0 +1,41 @@
+{
+  "cik": "123456",
+  "entityType": "operating",
+  "sic": "9999",
+  "sicDescription": "Anonymized fixture",
+  "name": "EXAMPLE INDUSTRIES, INC.",
+  "tickers": ["EXM"],
+  "exchanges": ["Nasdaq"],
+  "filings": {
+    "recent": {
+      "accessionNumber": [
+        "0000123456-26-000002",
+        "0000123456-26-000001"
+      ],
+      "filingDate": ["2026-07-20", "2026-07-18"],
+      "reportDate": ["2026-07-20", ""],
+      "acceptanceDateTime": [
+        "2026-07-20T14:05:06.000Z",
+        "2026-07-18T20:01:02.000Z"
+      ],
+      "act": ["34", "34"],
+      "form": ["8-K/A", "8-K"],
+      "fileNumber": ["001-00001", "001-00001"],
+      "filmNumber": ["261234568", "261234567"],
+      "items": ["1.01,9.01", "2.01"],
+      "size": [24000, 18000],
+      "isXBRL": [1, 1],
+      "isInlineXBRL": [1, 1],
+      "primaryDocument": ["example-20260720.htm", "example-20260718.htm"],
+      "primaryDocDescription": ["FORM 8-K/A", "FORM 8-K"]
+    },
+    "files": [
+      {
+        "name": "CIK0000123456-submissions-001.json",
+        "filingCount": 10,
+        "filingFrom": "2020-01-01",
+        "filingTo": "2025-12-31"
+      }
+    ]
+  }
+}

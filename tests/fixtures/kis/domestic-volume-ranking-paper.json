@@ -1,0 +1,70 @@
+{
+  "_fixture": {
+    "provider": "KIS",
+    "environment": "paper",
+    "capturedAt": "2026-07-20T10:01:44.000Z",
+    "request": {
+      "FID_COND_MRKT_DIV_CODE": "J",
+      "FID_COND_SCR_DIV_CODE": "20171",
+      "FID_INPUT_ISCD": "0000",
+      "FID_DIV_CLS_CODE": "0",
+      "FID_BLNG_CLS_CODE": "3",
+      "FID_TRGT_CLS_CODE": "111111111",
+      "FID_TRGT_EXLS_CLS_CODE": "000000",
+      "FID_INPUT_PRICE_1": "0",
+      "FID_INPUT_PRICE_2": "100000000",
+      "FID_VOL_CNT": "0",
+      "FID_INPUT_DATE_1": ""
+    },
+    "truncated": true,
+    "originalItemCount": 30,
+    "secretFields": "not captured"
+  },
+  "rt_cd": "0",
+  "msg_cd": "MCA00000",
+  "msg1": "정상처리 되었습니다.",
+  "output": [
+    {
+      "hts_kor_isnm": "SK하이닉스",
+      "mksc_shrn_iscd": "000660",
+      "data_rank": "1",
+      "stck_prpr": "1764000",
+      "prdy_vrss_sign": "5",
+      "prdy_vrss": "-78000",
+      "prdy_ctrt": "-4.23",
+      "acml_vol": "5876444",
+      "prdy_vol": "5608812",
+      "lstn_stcn": "712702365",
+      "avrg_vol": "5876444",
+      "n_befr_clpr_vrss_prpr_rate": "-4.23",
+      "vol_inrt": "104.77",
+      "vol_tnrt": "0.82",
+      "nday_vol_tnrt": "0.82",
+      "avrg_tr_pbmn": "10575264659754",
+      "tr_pbmn_tnrt": "0.84",
+      "nday_tr_pbmn_tnrt": "0.84",
+      "acml_tr_pbmn": "10575264659754"
+    },
+    {
+      "hts_kor_isnm": "삼성전자",
+      "mksc_shrn_iscd": "005930",
+      "data_rank": "2",
+      "stck_prpr": "244000",
+      "prdy_vrss_sign": "5",
+      "prdy_vrss": "-11000",
+      "prdy_ctrt": "-4.31",
+      "acml_vol": "26804038",
+      "prdy_vol": "27001478",
+      "lstn_stcn": "5846278608",
+      "avrg_vol": "26804038",
+      "n_befr_clpr_vrss_prpr_rate": "-4.31",
+      "vol_inrt": "99.27",
+      "vol_tnrt": "0.46",
+      "nday_vol_tnrt": "0.46",
+      "avrg_tr_pbmn": "6614607186368",
+      "tr_pbmn_tnrt": "0.46",
+      "nday_tr_pbmn_tnrt": "0.46",
+      "acml_tr_pbmn": "6614607186368"
+    }
+  ]
+}

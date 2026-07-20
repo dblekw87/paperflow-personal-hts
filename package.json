@@ -1,0 +1,58 @@
+{
+  "name": "papertrading-hts",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Local-only KIS market-data and paper-trading HTS",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "health": "tsx src/cli/health.ts",
+    "health:live": "tsx src/cli/health.ts --live",
+    "db:init": "tsx src/cli/db-init.ts",
+    "probe:kr": "tsx src/cli/ws-probe.ts --market kr",
+    "probe:nxt": "tsx src/cli/ws-probe.ts --market nxt",
+    "probe:us": "tsx src/cli/ws-probe.ts --market us",
+    "probe:proxies": "tsx src/cli/ws-probe.ts --market proxy",
+    "probe:rankings": "tsx src/cli/ranking-probe.ts",
+    "probe:prod-pages": "tsx src/cli/prod-pages-probe.ts",
+    "desktop:typecheck": "tsc --noEmit -p tsconfig.renderer.json && tsc --noEmit -p tsconfig.electron.json",
+    "desktop:build:renderer": "vite build",
+    "desktop:build:electron": "tsc -p tsconfig.electron.json && esbuild apps/desktop/src/preload/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=apps/desktop/dist-electron/apps/desktop/src/preload/preload.cjs",
+    "desktop:build": "npm run desktop:typecheck && npm run desktop:build:renderer && npm run desktop:build:electron",
+    "desktop:smoke:preload": "npm run desktop:build && electron scripts/smoke-sandboxed-preload.cjs",
+    "desktop:capture": "npm run desktop:build:renderer && electron scripts/capture-desktop-preview.cjs",
+    "desktop:dev": "npm run desktop:build:electron && concurrently -k \"vite\" \"wait-on http://localhost:5173 && electron apps/desktop/dist-electron/apps/desktop/src/main/main.js --dev\"",
+    "desktop:start": "npm run desktop:build && electron apps/desktop/dist-electron/apps/desktop/src/main/main.js",
+    "check": "npm run typecheck && npm run desktop:typecheck && npm test && npm run health"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.11.1",
+    "dotenv": "^17.2.1",
+    "lucide-react": "^1.25.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "ws": "^8.18.3",
+    "zod": "^4.0.5"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^24.0.13",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@types/ws": "^8.18.1",
+    "@vitejs/plugin-react": "^5.0.4",
+    "concurrently": "^10.0.3",
+    "electron": "^43.1.1",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3",
+    "vite": "^7.3.6",
+    "vitest": "^3.2.4",
+    "wait-on": "^9.0.10"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "main": "apps/desktop/dist-electron/apps/desktop/src/main/main.js"
+}

@@ -1,0 +1,8 @@
+{
+  "fields": ["cik", "name", "ticker", "exchange"],
+  "data": [
+    [123456, "EXAMPLE INDUSTRIES, INC.", "EXM", "Nasdaq"],
+    [234567, "SAMPLE HOLDINGS PLC", "SMP-A", "NYSE"],
+    [345678, "DEMONSTRATION FUND", "DMOF", null]
+  ]
+}

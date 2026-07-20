@@ -1,0 +1,30 @@
+{
+  "rt_cd": "0",
+  "msg_cd": "MCA00000",
+  "msg1": "fixture",
+  "output1": {
+    "hts_kor_isnm": "익명종목"
+  },
+  "output2": [
+    {
+      "stck_bsop_date": "20260720",
+      "stck_cntg_hour": "090200",
+      "stck_prpr": "70100",
+      "stck_oprc": "70000",
+      "stck_hgpr": "70200",
+      "stck_lwpr": "69900",
+      "cntg_vol": "1200",
+      "acml_tr_pbmn": "147330000"
+    },
+    {
+      "stck_bsop_date": "20260720",
+      "stck_cntg_hour": "090100",
+      "stck_prpr": "70000",
+      "stck_oprc": "69800",
+      "stck_hgpr": "70100",
+      "stck_lwpr": "69700",
+      "cntg_vol": "900",
+      "acml_tr_pbmn": "63150000"
+    }
+  ]
+}
