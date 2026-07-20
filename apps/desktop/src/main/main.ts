@@ -96,6 +96,40 @@ async function capturePortfolioPage(
   await writeFile(outputPath, image.toPNG());
 }
 
+async function capturePortfolioElement(
+  window: BrowserWindow,
+  selector: string,
+  outputPath: string,
+): Promise<void> {
+  await wait(350);
+  const rect = (await window.webContents.executeJavaScript(
+    `(() => {
+      const element = document.querySelector(${JSON.stringify(selector)});
+      if (element === null) return null;
+      const bounds = element.getBoundingClientRect();
+      const x = Math.max(0, Math.floor(bounds.left));
+      const y = Math.max(0, Math.floor(bounds.top));
+      return {
+        x,
+        y,
+        width: Math.max(
+          1,
+          Math.min(Math.ceil(bounds.width), window.innerWidth - x)
+        ),
+        height: Math.max(
+          1,
+          Math.min(Math.ceil(bounds.height), window.innerHeight - y)
+        )
+      };
+    })()`,
+  )) as { x: number; y: number; width: number; height: number } | null;
+  if (rect === null) {
+    throw new Error(`Portfolio capture element not found: ${selector}`);
+  }
+  const image = await window.webContents.capturePage(rect);
+  await writeFile(outputPath, image.toPNG());
+}
+
 async function capturePortfolio(window: BrowserWindow): Promise<void> {
   const imageDirectory = resolve(process.cwd(), "docs", "images");
   await mkdir(imageDirectory, { recursive: true });
@@ -120,6 +154,11 @@ async function capturePortfolio(window: BrowserWindow): Promise<void> {
   await capturePortfolioPage(
     window,
     join(imageDirectory, "paperflow-dashboard.png"),
+  );
+  await capturePortfolioElement(
+    window,
+    ".market-chart",
+    join(imageDirectory, "paperflow-chart.png"),
   );
 
   await waitForRendererCondition(
