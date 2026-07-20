@@ -31,9 +31,10 @@ function masterLine(
   standardCode: string,
   name: string,
   trailerWidth: number,
+  securityGroupCode = "ST",
 ): string {
-  return `${symbol.padEnd(9)}${standardCode.padEnd(12)}${name}${" ".repeat(
-    trailerWidth,
+  return `${symbol.padEnd(9)}${standardCode.padEnd(12)}${name}${securityGroupCode}${" ".repeat(
+    trailerWidth - 2,
   )}\n`;
 }
 
@@ -54,13 +55,16 @@ function cp949MasterLine(
   standardCode: string,
   nameBytes: Uint8Array,
   trailerWidth: number,
+  securityGroupCode = "ST",
 ): Uint8Array {
   return concatBytes(
     new TextEncoder().encode(
       `${symbol.padEnd(9)}${standardCode.padEnd(12)}`,
     ),
     nameBytes,
-    new TextEncoder().encode(`${" ".repeat(trailerWidth)}\n`),
+    new TextEncoder().encode(
+      `${securityGroupCode}${" ".repeat(trailerWidth - 2)}\n`,
+    ),
   );
 }
 
@@ -80,7 +84,13 @@ describe("KIS domestic instrument master", () => {
 
   it("parses fixed-width identity fields without leaking trailer data", () => {
     const items = parseDomesticInstrumentMaster(
-      masterLine("005930", "KR7005930003", "삼성전자", 228),
+      `${masterLine("005930", "KR7005930003", "삼성전자", 228)}${masterLine(
+        "069500",
+        "KR7069500007",
+        "KODEX 200",
+        228,
+        "EF",
+      )}`,
       { market: "KOSPI", trailerWidth: 228 },
     );
     expect(items).toEqual([
@@ -90,6 +100,15 @@ describe("KIS domestic instrument master", () => {
         standardCode: "KR7005930003",
         name: "삼성전자",
         market: "KOSPI",
+        securityType: "STOCK",
+      },
+      {
+        instrumentId: "KRX:069500",
+        symbol: "069500",
+        standardCode: "KR7069500007",
+        name: "KODEX 200",
+        market: "KOSPI",
+        securityType: "ETF",
       },
     ]);
   });
@@ -102,6 +121,7 @@ describe("KIS domestic instrument master", () => {
         standardCode: "KR7005930003",
         name: "삼성전자",
         market: "KOSPI" as const,
+        securityType: "STOCK" as const,
       },
       {
         instrumentId: "KRX:009150",
@@ -109,6 +129,7 @@ describe("KIS domestic instrument master", () => {
         standardCode: "KR7009150004",
         name: "삼성전기",
         market: "KOSPI" as const,
+        securityType: "STOCK" as const,
       },
     ];
     expect(
@@ -214,18 +235,18 @@ describe("KIS domestic instrument master", () => {
 
     await expect(master.search("삼")).rejects.toThrow(/coverage is incomplete/);
     expect(
-      existsSync(join(userDataPath, "instrument-master-v1.json")),
+      existsSync(join(userDataPath, "instrument-master-v2.json")),
     ).toBe(false);
   });
 
   it("falls back to a stale validated cache when refresh is unavailable", async () => {
     const userDataPath = mkdtempSync(join(tmpdir(), "paperflow-master-"));
     temporaryDirectories.push(userDataPath);
-    const cachePath = join(userDataPath, "instrument-master-v1.json");
+    const cachePath = join(userDataPath, "instrument-master-v2.json");
     writeFileSync(
       cachePath,
       JSON.stringify({
-        schemaVersion: 1,
+        schemaVersion: 2,
         fetchedAt: "2026-01-01T00:00:00.000Z",
         items: [
           {
@@ -234,6 +255,7 @@ describe("KIS domestic instrument master", () => {
             standardCode: "KR7005930003",
             name: "삼성전자",
             market: "KOSPI",
+            securityType: "STOCK",
           },
           {
             instrumentId: "KRX:247540",
@@ -241,6 +263,7 @@ describe("KIS domestic instrument master", () => {
             standardCode: "KR7247540008",
             name: "에코프로비엠",
             market: "KOSDAQ",
+            securityType: "STOCK",
           },
         ],
       }),
@@ -258,6 +281,6 @@ describe("KIS domestic instrument master", () => {
       stale: true,
       items: [{ symbol: "005930" }],
     });
-    expect(JSON.parse(readFileSync(cachePath, "utf8")).schemaVersion).toBe(1);
+    expect(JSON.parse(readFileSync(cachePath, "utf8")).schemaVersion).toBe(2);
   });
 });

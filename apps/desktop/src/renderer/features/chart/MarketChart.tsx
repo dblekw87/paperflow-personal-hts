@@ -19,6 +19,7 @@ import {
   chartTimeAxisTickIndexes,
   formatChartTimeAxisLabel,
 } from "./chart-time-axis.js";
+import { resolveChartCandleGeometry } from "./chart-candle-geometry.js";
 import {
   fullChartViewport,
   normalizeChartViewport,
@@ -390,12 +391,12 @@ export function MarketChart({
     [viewBuckets],
   );
 
-  const step =
-    usableCandles.length === 0
-      ? PLOT_RIGHT - PLOT_LEFT
-      : (PLOT_RIGHT - PLOT_LEFT) / usableCandles.length;
-  const candleWidth = Math.max(1.5, Math.min(28, step * 0.82));
-  const xAt = (index: number) => PLOT_LEFT + step * (index + 0.5);
+  const { plotStart, plotEnd, step, candleWidth } = resolveChartCandleGeometry(
+    usableCandles.length,
+    PLOT_LEFT,
+    PLOT_RIGHT,
+  );
+  const xAt = (index: number) => plotStart + step * (index + 0.5);
   const timeAxisTickIndexes = chartTimeAxisTickIndexes(
     usableCandles.length,
   );
@@ -561,16 +562,20 @@ export function MarketChart({
       const visible = drag.viewport.end - drag.viewport.start;
       const deltaPixels = event.clientX - drag.clientX;
       const plotPixelWidth =
-        bounds.width * ((PLOT_RIGHT - PLOT_LEFT) / VIEW_WIDTH);
+        bounds.width * ((plotEnd - plotStart) / VIEW_WIDTH);
       const deltaCandles = -(deltaPixels / plotPixelWidth) * visible;
       setViewport(
         panChartViewport(drag.viewport, sourceCandles.length, deltaCandles),
       );
     }
     const svgX = ((event.clientX - bounds.left) / bounds.width) * VIEW_WIDTH;
+    if (svgX < plotStart || svgX > plotEnd) {
+      setHoveredIndex(null);
+      return;
+    }
     const index = Math.max(
       0,
-      Math.min(usableCandles.length - 1, Math.floor((svgX - PLOT_LEFT) / step)),
+      Math.min(usableCandles.length - 1, Math.floor((svgX - plotStart) / step)),
     );
     setHoveredIndex(index);
   };
@@ -587,8 +592,8 @@ export function MarketChart({
     const svgX = ((event.clientX - bounds.left) / bounds.width) * VIEW_WIDTH;
     const svgY = ((event.clientY - bounds.top) / bounds.height) * VIEW_HEIGHT;
     if (
-      svgX < PLOT_LEFT ||
-      svgX > PLOT_RIGHT ||
+      svgX < plotStart ||
+      svgX > plotEnd ||
       svgY < PRICE_TOP ||
       svgY > TURNOVER_BOTTOM
     ) {
@@ -618,8 +623,8 @@ export function MarketChart({
     const svgX = ((event.clientX - bounds.left) / bounds.width) * VIEW_WIDTH;
     const svgY = ((event.clientY - bounds.top) / bounds.height) * VIEW_HEIGHT;
     if (
-      svgX < PLOT_LEFT ||
-      svgX > PLOT_RIGHT ||
+      svgX < plotStart ||
+      svgX > plotEnd ||
       svgY < PRICE_TOP ||
       svgY > TURNOVER_BOTTOM
     ) {
@@ -628,7 +633,7 @@ export function MarketChart({
     event.preventDefault();
     const anchorRatio = Math.max(
       0,
-      Math.min(1, (svgX - PLOT_LEFT) / (PLOT_RIGHT - PLOT_LEFT)),
+      Math.min(1, (svgX - plotStart) / (plotEnd - plotStart)),
     );
     setViewport((current) =>
       zoomChartViewport(

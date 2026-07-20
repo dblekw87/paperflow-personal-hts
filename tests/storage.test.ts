@@ -42,13 +42,13 @@ describe("local SQLite storage", () => {
       now: () => NOW,
     });
     try {
-      expect(opened.schemaVersion).toBe(5);
+      expect(opened.schemaVersion).toBe(6);
       expect(inspectDatabaseHealth(opened.database)).toEqual({
         healthy: true,
         code: "SQLITE_HEALTHY",
         message:
-          "SQLite integrity, foreign-key rows, migration checksums, immutable ledger triggers, busy timeout, and schema v5 are valid",
-        schemaVersion: 5,
+          "SQLite integrity, foreign-key rows, migration checksums, immutable ledger triggers, busy timeout, and schema v6 are valid",
+        schemaVersion: 6,
       });
     } finally {
       opened.database.close();
@@ -93,6 +93,7 @@ describe("local SQLite storage", () => {
         { version: 3, applied_at: NOW },
         { version: 4, applied_at: NOW },
         { version: 5, applied_at: NOW },
+        { version: 6, applied_at: NOW },
       ]);
     } finally {
       second.database.close();

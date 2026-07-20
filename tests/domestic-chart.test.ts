@@ -58,7 +58,7 @@ describe("KIS domestic candle REST contract", () => {
       freshness: "LIVE",
     });
     expect(history.quality).toMatchObject({
-      coverage: "CURRENT_KRX_BUSINESS_DAY_ONLY",
+      coverage: "LATEST_AVAILABLE_KRX_BUSINESS_DAY_ONLY",
       turnover: "UNAVAILABLE",
     });
     expect(history.pagination).toMatchObject({
@@ -262,6 +262,77 @@ describe("KIS domestic candle REST contract", () => {
       ),
     ).toBe(true);
     expect(history.pagination.complete).toBe(true);
+  });
+
+  it("skips future-stamped pre-open minute rows and reaches the prior session", async () => {
+    const requests: string[] = [];
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      requests.push(url.searchParams.get("FID_INPUT_HOUR_1") ?? "");
+      return jsonResponse({
+        rt_cd: "0",
+        output2:
+          requests.length === 1
+            ? [
+                {
+                  ...minuteRow(9 * 60 + 1),
+                  stck_bsop_date: "20260721",
+                },
+              ]
+            : [
+                {
+                  ...minuteRow(9 * 60),
+                  stck_bsop_date: "20260721",
+                },
+                {
+                  ...minuteRow(15 * 60 + 30),
+                  stck_bsop_date: "20260717",
+                },
+              ],
+      });
+    });
+    const client = clientWith(
+      fetchMock,
+      undefined,
+      () => new Date("2026-07-20T22:30:00.000Z"),
+    );
+
+    const history = await client.getDomesticMinuteCandles({
+      symbol: "320000",
+      beforeOrAt: "153000",
+      maxPages: 2,
+    });
+
+    expect(requests).toEqual(["153000", "090000"]);
+    expect(history.candles).toHaveLength(1);
+    expect(history.candles[0]).toMatchObject({
+      instrumentId: "KRX:320000",
+      openedAt: "2026-07-17T06:29:00.000Z",
+      state: "CLOSED",
+    });
+  });
+
+  it("excludes a future-stamped current daily row before the session opens", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({
+        rt_cd: "0",
+        output2: [dailyRow("20260721"), dailyRow("20260720")],
+      }),
+    );
+    const client = clientWith(
+      fetchMock,
+      undefined,
+      () => new Date("2026-07-20T22:30:00.000Z"),
+    );
+
+    const history = await client.getDomesticDailyCandles({
+      symbol: "320000",
+      startDate: "20260701",
+      endDate: "20260721",
+    });
+
+    expect(history.candles).toHaveLength(1);
+    expect(history.candles[0]?.openedAt).toBe("2026-07-20T00:00:00.000Z");
   });
 
   it("paginates daily history with oldest-date minus one and deduplicates overlap", async () => {

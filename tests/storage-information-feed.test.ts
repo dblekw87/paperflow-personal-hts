@@ -25,7 +25,7 @@ afterEach(() => {
 describe("LocalInformationRepository", () => {
   it("deduplicates immutable provider items and returns the latest translation", () => {
     const opened = openTestDatabase();
-    expect(opened.schemaVersion).toBe(5);
+    expect(opened.schemaVersion).toBe(6);
     const repository = new LocalInformationRepository(
       opened.database,
       () => "2026-07-20T10:00:00.000Z",

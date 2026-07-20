@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import {
   calculateDailyVolumeChangeRate,
   compareDailyVolumeRatioDescending,
+  isUsableDailyRankingItem,
   KisDomesticRankingClient,
 } from "../src/kis/domestic-ranking.js";
 
@@ -122,9 +123,30 @@ describe("calculateDailyVolumeChangeRate", () => {
   });
 
   it("returns unavailable when the previous day has no usable volume", () => {
+    expect(calculateDailyVolumeChangeRate("0", "100")).toBeNull();
     expect(calculateDailyVolumeChangeRate("100", null)).toBeNull();
     expect(calculateDailyVolumeChangeRate("100", "0")).toBeNull();
     expect(calculateDailyVolumeChangeRate("not-a-number", "100")).toBeNull();
+  });
+
+  it("removes pre-open zero rows and impossible KRX daily rates", () => {
+    const base = {
+      price: "15970",
+      changeRate: "10.00",
+      cumulativeVolume: "100",
+      cumulativeTurnover: "1597000",
+    };
+    expect(isUsableDailyRankingItem(base)).toBe(true);
+    expect(
+      isUsableDailyRankingItem({
+        ...base,
+        cumulativeVolume: "0",
+        cumulativeTurnover: "0",
+      }),
+    ).toBe(false);
+    expect(
+      isUsableDailyRankingItem({ ...base, changeRate: "-100.00" }),
+    ).toBe(false);
   });
 
   it("sorts ratios exactly without converting large integers to Number", () => {

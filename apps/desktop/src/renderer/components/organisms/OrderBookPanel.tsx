@@ -22,6 +22,7 @@ export interface OrderBookPanelProps {
   currentDirection: PriceDirection;
   freshness: "live" | "delayed" | "stale" | "offline" | "closed" | "partial";
   dataMode?: "REAL" | "FIXTURE";
+  referenceOnly?: boolean;
   depthLabel: string;
   asOfLabel: string;
   orderQuantity: string;
@@ -98,6 +99,7 @@ export function OrderBookPanel({
   currentDirection,
   freshness,
   dataMode = "REAL",
+  referenceOnly = false,
   depthLabel,
   asOfLabel,
   orderQuantity,
@@ -117,11 +119,15 @@ export function OrderBookPanel({
           <p className="pt-eyebrow">
             {dataMode === "FIXTURE"
               ? "SYNTHETIC ORDER BOOK"
+              : referenceOnly
+                ? "REFERENCE PRICE LEVELS"
               : "REAL ORDER BOOK"}
           </p>
           <h2 id="order-book-title">
             {dataMode === "FIXTURE"
               ? "호가 화면 미리보기"
+              : referenceOnly
+                ? "가격 호가 단위"
               : freshness === "closed"
                 ? "장마감 호가 스냅샷"
                 : freshness === "live"
@@ -177,8 +183,13 @@ export function OrderBookPanel({
               {instrumentId}{" "}
               {dataMode === "FIXTURE"
                 ? "합성 호가 미리보기"
-                : "실제 시장 호가"}
-              . 수량 입력 후 왼쪽 매도 또는 오른쪽 매수 박스를 누르면 해당 가격으로 로컬 주문합니다.
+                : referenceOnly
+                  ? "실제 현재가 기준 가격 단계 안내"
+                  : "실제 시장 호가"}
+              .{" "}
+              {referenceOnly
+                ? "실제 잔량 미수신으로 주문할 수 없습니다."
+                : "수량 입력 후 왼쪽 매도 또는 오른쪽 매수 박스를 누르면 해당 가격으로 로컬 주문합니다."}
             </caption>
             <thead>
               <tr>
@@ -220,6 +231,8 @@ export function OrderBookPanel({
       <p className="pt-panel__footnote">
         {dataMode === "FIXTURE"
           ? "합성 호가 fixture입니다. 호가 행 클릭은 차트 미리보기에만 사용됩니다."
+          : referenceOnly
+            ? "KIS가 장전 잔량을 제공하지 않아 실제 현재가 기준 가격 단위만 표시합니다. 잔량은 미수신이며 주문·체결에는 사용하지 않습니다."
           : "수량 입력 후 왼쪽 매도·오른쪽 매수 박스를 클릭하면 로컬 계좌에만 주문하며 증권사에는 전송하지 않습니다."}
       </p>
     </section>

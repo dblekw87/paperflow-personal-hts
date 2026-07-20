@@ -36,7 +36,11 @@ export const DomesticCandleHistorySchema = z
       nextCursor: z.string().nullable(),
     }),
     quality: z.object({
-      coverage: z.enum(["CURRENT_KRX_BUSINESS_DAY_ONLY", "REQUESTED_DATE_RANGE"]),
+      coverage: z.enum([
+        "LATEST_AVAILABLE_KRX_BUSINESS_DAY_ONLY",
+        "CURRENT_KRX_BUSINESS_DAY_ONLY",
+        "REQUESTED_DATE_RANGE",
+      ]),
       priceAdjustment: z.enum([
         "CURRENT_SESSION_ORIGINAL",
         "ADJUSTED",
@@ -49,6 +53,8 @@ export const DomesticCandleHistorySchema = z
           "LATEST_MINUTE_VOLUME_MAY_CARRY_PREVIOUS_MINUTE_UNTIL_FIRST_TRADE",
           "MINUTE_TURNOVER_IS_UNAVAILABLE_BECAUSE_KIS_REPORTS_CUMULATIVE_TURNOVER",
           "MINUTE_ENDPOINT_DOES_NOT_PROVIDE_PRIOR_BUSINESS_DAYS",
+          "MINUTE_ENDPOINT_RETURNS_ONLY_ONE_LATEST_AVAILABLE_BUSINESS_DAY",
+          "PREOPEN_RESPONSE_MAY_RESOLVE_TO_THE_PREVIOUS_BUSINESS_DAY",
           "CLOSING_AUCTION_INDICATIVE_ROWS_EXCLUDED",
         ]),
       ),

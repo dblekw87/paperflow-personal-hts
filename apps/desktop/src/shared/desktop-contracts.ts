@@ -169,6 +169,7 @@ export interface DesktopInstrumentSearchItemProjection {
   readonly standardCode: string;
   readonly name: string;
   readonly market: "KOSPI" | "KOSDAQ";
+  readonly securityType: "STOCK" | "ETF" | "ETN" | "OTHER";
 }
 
 export interface DesktopInstrumentSearchProjection {
@@ -551,7 +552,10 @@ export function isDesktopInstrumentSearchProjection(
       typeof item["name"] === "string" &&
       item["name"].length > 0 &&
       item["name"].length <= 120 &&
-      ["KOSPI", "KOSDAQ"].includes(String(item["market"])),
+      ["KOSPI", "KOSDAQ"].includes(String(item["market"])) &&
+      ["STOCK", "ETF", "ETN", "OTHER"].includes(
+        String(item["securityType"]),
+      ),
   );
 }
 

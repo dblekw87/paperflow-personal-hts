@@ -447,6 +447,23 @@ CREATE TABLE information_poll_checkpoints (
 ) STRICT;
 `;
 
+const DOMESTIC_ORDERBOOK_SNAPSHOT_SCHEMA_SQL = `
+CREATE TABLE domestic_orderbook_snapshots (
+  instrument_id TEXT PRIMARY KEY CHECK(instrument_id GLOB 'KRX:*'),
+  venue TEXT NOT NULL CHECK(venue = 'KRX'),
+  bids_json TEXT NOT NULL CHECK(json_valid(bids_json)),
+  asks_json TEXT NOT NULL CHECK(json_valid(asks_json)),
+  total_bid_quantity TEXT,
+  total_ask_quantity TEXT,
+  provider_time TEXT NOT NULL CHECK(length(provider_time) = 6),
+  provider_received_at TEXT NOT NULL,
+  captured_at TEXT NOT NULL
+) STRICT;
+
+CREATE INDEX domestic_orderbook_snapshots_captured_idx
+  ON domestic_orderbook_snapshots(captured_at DESC, instrument_id);
+`;
+
 function defineMigration(
   version: number,
   name: string,
@@ -477,6 +494,11 @@ export const MIGRATIONS: readonly Migration[] = [
     5,
     "local_news_and_disclosure_feed",
     INFORMATION_FEED_SCHEMA_SQL,
+  ),
+  defineMigration(
+    6,
+    "last_real_domestic_orderbook_snapshots",
+    DOMESTIC_ORDERBOOK_SNAPSHOT_SCHEMA_SQL,
   ),
 ];
 

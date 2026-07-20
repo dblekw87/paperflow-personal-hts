@@ -65,6 +65,23 @@ export interface DomesticFluctuationRankingQuery {
   readonly continuation?: "N";
 }
 
+export function isUsableDailyFluctuationItem(
+  item: DomesticFluctuationItem,
+): boolean {
+  const price = Number(item.price);
+  const volume = Number(item.cumulativeVolume);
+  const changeRate = Number(item.changeRate);
+  return (
+    Number.isFinite(price) &&
+    price > 0 &&
+    Number.isFinite(volume) &&
+    volume > 0 &&
+    Number.isFinite(changeRate) &&
+    changeRate >= -30 &&
+    changeRate <= 30
+  );
+}
+
 function nullable(value: string): string | null {
   const normalized = value.trim();
   return normalized.length === 0 ? null : normalized;

@@ -36,6 +36,16 @@ import {
   type PaperFillMarkerViewModel,
 } from "../features/chart/MarketChart.js";
 import { applyLiveTradeToCandles } from "../features/chart/live-candle-overlay.js";
+import {
+  buildReferencePriceLadder,
+  type DomesticEquityMarket,
+  type DomesticSecurityType,
+} from "../features/orderbook/reference-price-ladder.js";
+import {
+  LOCAL_WATCHLIST_KEY,
+  readLocalWatchlist,
+  type LocalWatchlistItem,
+} from "../features/watchlist/local-watchlist.js";
 import { useDesktopRuntime } from "../hooks/useDesktopRuntime.js";
 import { formatKrwTurnoverEok } from "../lib/market-format.js";
 import {
@@ -446,7 +456,11 @@ export function App() {
   const [liveChartCandles, setLiveChartCandles] = useState<
     readonly MarketCandleViewModel[]
   >([]);
-  const [watched, setWatched] = useState(true);
+  const [watchlist, setWatchlist] = useState<readonly LocalWatchlistItem[]>(() =>
+    hasDesktopRuntime
+      ? readLocalWatchlist(localStorage.getItem(LOCAL_WATCHLIST_KEY))
+      : [],
+  );
   const [selectedMarket, setSelectedMarket] = useState("국내");
   const [workspacePage, setWorkspacePage] =
     useState<WorkspacePage>("DASHBOARD");
@@ -455,6 +469,8 @@ export function App() {
   const [selectedInstrument, setSelectedInstrument] = useState<{
     readonly symbol: string;
     readonly name: string;
+    readonly market: DomesticEquityMarket | null;
+    readonly securityType: DomesticSecurityType | null;
   } | null>(null);
   const [instrumentQuery, setInstrumentQuery] = useState("");
   const [instrumentSearchOpen, setInstrumentSearchOpen] = useState(false);
@@ -479,6 +495,11 @@ export function App() {
 
   const effectiveTheme =
     themePreference === "system" ? systemTheme : themePreference;
+
+  useEffect(() => {
+    if (!hasDesktopRuntime) return;
+    localStorage.setItem(LOCAL_WATCHLIST_KEY, JSON.stringify(watchlist));
+  }, [hasDesktopRuntime, watchlist]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = effectiveTheme;
@@ -703,6 +724,28 @@ export function App() {
     }
     return String(Math.round(price - change));
   })();
+  const activeDomesticMarket = (() => {
+    if (selectedInstrument?.symbol === activeSymbol) {
+      return selectedInstrument.market;
+    }
+    const known = instruments.find((item) => item.symbol === activeSymbol);
+    return known?.market === "KOSPI" || known?.market === "KOSDAQ"
+      ? known.market
+      : null;
+  })();
+  const activeSecurityType = (() => {
+    if (selectedInstrument?.symbol === activeSymbol) {
+      return selectedInstrument.securityType;
+    }
+    return instruments.some(
+      (item) => item.symbol === activeSymbol && item.market !== "NASDAQ",
+    )
+      ? ("STOCK" as const)
+      : null;
+  })();
+  const watched = watchlist.some(
+    (item) => item.instrumentId === activeInstrumentId,
+  );
   const isClosedMarket =
     desktop.market?.session === "CLOSED" ||
     desktop.market?.session === "AFTER";
@@ -721,6 +764,21 @@ export function App() {
     hasDesktopRuntime &&
     isClosedMarket &&
     (desktop.market?.price !== null || hasLastOrderBook);
+  const referencePriceLadder = useMemo(
+    () =>
+      buildReferencePriceLadder({
+        anchorPrice: chartCurrentPrice,
+        previousClosePrice: chartPreviousClosePrice,
+        market: activeDomesticMarket,
+        securityType: activeSecurityType,
+      }),
+    [activeDomesticMarket, activeSecurityType, chartCurrentPrice, chartPreviousClosePrice],
+  );
+  const isReferenceOrderBook =
+    hasDesktopRuntime &&
+    !hasLastOrderBook &&
+    referencePriceLadder.asks.length > 0 &&
+    referencePriceLadder.bids.length > 0;
   const displayedAsks = useMemo(
     () =>
       desktop.market && desktop.market.asks.length > 0
@@ -733,9 +791,9 @@ export function App() {
               1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10,
           }))
         : hasDesktopRuntime
-          ? []
+          ? referencePriceLadder.asks
           : asks,
-    [desktop.market, displayChangeRate, displayDirection, hasDesktopRuntime],
+    [desktop.market, displayChangeRate, displayDirection, hasDesktopRuntime, referencePriceLadder.asks],
   );
   const displayedBids = useMemo(
     () =>
@@ -749,9 +807,9 @@ export function App() {
               1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10,
           }))
         : hasDesktopRuntime
-          ? []
+          ? referencePriceLadder.bids
           : bids,
-    [desktop.market, displayChangeRate, displayDirection, hasDesktopRuntime],
+    [desktop.market, displayChangeRate, displayDirection, hasDesktopRuntime, referencePriceLadder.bids],
   );
   const hasKisHistory =
     desktop.chart?.state === "READY" &&
@@ -861,23 +919,27 @@ export function App() {
     ],
   );
   const sidebarInstruments = hasDesktopRuntime
-    ? [
-        {
-          instrumentId: activeInstrumentId,
-          symbol: activeSymbol,
-          name: activeInstrumentName,
-          market: "KOSPI",
-          price: displayPrice,
-          changeRate: displayChangeRate,
-          direction: displayDirection,
-          turnover: formatKrwTurnoverEok(
-            desktop.market?.cumulativeTurnover ?? null,
-            "—",
-          ),
-          selected: true,
-          freshness: isKisLive ? ("live" as const) : ("stale" as const),
-        },
-      ]
+    ? watchlist.map((item) => {
+        const active = item.instrumentId === activeInstrumentId;
+        return {
+          instrumentId: item.instrumentId,
+          symbol: item.symbol,
+          name: item.name,
+          market: item.market ?? "KRX",
+          price: active ? displayPrice : "—",
+          changeRate: active ? displayChangeRate : "—",
+          direction: active ? displayDirection : ("flat" as const),
+          turnover: active
+            ? formatKrwTurnoverEok(
+                desktop.market?.cumulativeTurnover ?? null,
+                "—",
+              )
+            : "—",
+          selected: active,
+          freshness:
+            active && isKisLive ? ("live" as const) : ("stale" as const),
+        };
+      })
     : instruments;
   const chartStatusLabel =
     desktop.chart?.interval === interval &&
@@ -894,7 +956,12 @@ export function App() {
   const openSearchedInstrument = (
     item: DesktopInstrumentSearchItemProjection,
   ) => {
-    setSelectedInstrument({ symbol: item.symbol, name: item.name });
+    setSelectedInstrument({
+      symbol: item.symbol,
+      name: item.name,
+      market: item.market,
+      securityType: item.securityType,
+    });
     setWorkspacePage("DASHBOARD");
     setInstrumentQuery("");
     setInstrumentSearchOpen(false);
@@ -1247,13 +1314,25 @@ export function App() {
         selectedMarket={selectedMarket === "미국" ? "미국" : "국내"}
         instruments={sidebarInstruments}
         onMarketChange={setSelectedMarket}
-        onInstrumentSelect={(instrumentId) =>
-          setNotice(
-            hasDesktopRuntime
-              ? `${instrumentId} 현재 실시간 workspace입니다. 다종목 전환은 연결 준비 중입니다.`
-              : `${instrumentId} fixture workspace를 선택했습니다.`,
-          )
-        }
+        onInstrumentSelect={(instrumentId) => {
+          if (!hasDesktopRuntime) {
+            setNotice(`${instrumentId} fixture workspace를 선택했습니다.`);
+            return;
+          }
+          const item = watchlist.find(
+            (candidate) => candidate.instrumentId === instrumentId,
+          );
+          if (!item) return;
+          setSelectedInstrument({
+            symbol: item.symbol,
+            name: item.name,
+            market: item.market,
+            securityType: item.securityType,
+          });
+          setWorkspacePage("DASHBOARD");
+          setNotice(`${item.name}(${item.symbol}) 종목 화면을 여는 중입니다.`);
+          void desktop.selectInstrument(item.symbol);
+        }}
       />
 
       <main className="workspace">
@@ -1323,7 +1402,29 @@ export function App() {
           }
           status={marketStatus}
           watched={watched}
-          onToggleWatch={() => setWatched((current) => !current)}
+          onToggleWatch={() => {
+            setWatchlist((current) => {
+              if (
+                current.some(
+                  (item) => item.instrumentId === activeInstrumentId,
+                )
+              ) {
+                return current.filter(
+                  (item) => item.instrumentId !== activeInstrumentId,
+                );
+              }
+              return [
+                ...current,
+                {
+                  instrumentId: activeInstrumentId,
+                  symbol: activeSymbol,
+                  name: activeInstrumentName,
+                  market: activeDomesticMarket,
+                  securityType: activeSecurityType,
+                },
+              ];
+            });
+          }}
           metrics={[
             {
               label: "마지막 종가",
@@ -1460,7 +1561,8 @@ export function App() {
                     : "offline"
             }
             dataMode={hasDesktopRuntime ? "REAL" : "FIXTURE"}
-            depthLabel="KRX 10호가"
+            referenceOnly={isReferenceOrderBook}
+            depthLabel={isReferenceOrderBook ? "잔량 미수신" : "KRX 10호가"}
             asOfLabel={
               desktop.market?.providerTime
                 ? `${desktop.market.providerTime} 마지막 수신`
@@ -1470,12 +1572,15 @@ export function App() {
             orderQuantity={draft.quantity}
             canOrderFromLevel={
               hasDesktopRuntime &&
+              hasLastOrderBook &&
               isRegularPaperSession &&
               desktop.account?.storageState === "READY" &&
               numericQuantity > 0n
             }
             levelOrderDisabledReason={
-              !isRegularPaperSession
+              !hasLastOrderBook
+                ? "실제 호가 잔량을 수신한 뒤 주문할 수 있습니다."
+                : !isRegularPaperSession
                 ? "KIS 정규장 실시간 호가에서만 주문할 수 있습니다."
                 : desktop.account?.storageState !== "READY"
                   ? "SQLite 로컬 계좌를 준비하는 중입니다."
@@ -1675,6 +1780,8 @@ export function App() {
                               setSelectedInstrument({
                                 symbol: item.symbol,
                                 name: item.name,
+                                market: null,
+                                securityType: null,
                               });
                               setWorkspacePage("DASHBOARD");
                               setNotice(

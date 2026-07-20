@@ -29,9 +29,11 @@ import { KisAuthClient } from "../../../../src/kis/auth.js";
 import { KisDomesticChartClient } from "../../../../src/kis/domestic-chart.js";
 import {
   compareDailyVolumeRatioDescending,
+  isUsableDailyRankingItem,
   KisDomesticRankingClient,
 } from "../../../../src/kis/domestic-ranking.js";
 import {
+  isUsableDailyFluctuationItem,
   KisDomesticFluctuationClient,
   type DomesticFluctuationItem,
 } from "../../../../src/kis/domestic-fluctuation.js";
@@ -65,6 +67,7 @@ import {
 import { openUserDataDatabase } from "../../../../src/storage/database.js";
 import { LocalPaperTradingRepository } from "../../../../src/storage/paper-repository.js";
 import { LocalInformationRepository } from "../../../../src/storage/information-repository.js";
+import { LocalMarketSnapshotRepository } from "../../../../src/storage/market-snapshot-repository.js";
 import { LocalSimulationRepository } from "../../../../src/storage/repository.js";
 import type {
   CashLedgerEntryInput,
@@ -130,6 +133,7 @@ export function projectDomesticFluctuationItems(
 ): DesktopRankingProjection["items"] {
   const direction = sort === "CHANGE_RATE_GAINERS" ? -1 : 1;
   return [...input]
+    .filter(isUsableDailyFluctuationItem)
     .filter((item) =>
       sort === "CHANGE_RATE_GAINERS"
         ? Number(item.changeRate) > 0
@@ -891,6 +895,7 @@ export class DesktopRuntime {
   readonly #accounts: LocalSimulationRepository;
   readonly #papers: LocalPaperTradingRepository;
   readonly #information: LocalInformationRepository;
+  readonly #marketSnapshots: LocalMarketSnapshotRepository;
   readonly #instrumentMaster: KisDomesticInstrumentMaster;
   readonly #emitMarket: (projection: DesktopMarketProjection) => void;
   readonly #emitAccount: (projection: DesktopAccountProjection) => void;
@@ -924,6 +929,7 @@ export class DesktopRuntime {
   #marketConnectionGeneration = 0;
   #marketSequence = 0n;
   #lastProcessedTradeIdentity: string | null = null;
+  #lastOrderBookSnapshotWriteAt = 0;
 
   public constructor(options: {
     userDataPath: string;
@@ -940,6 +946,7 @@ export class DesktopRuntime {
     this.#accounts = new LocalSimulationRepository(this.#database);
     this.#papers = new LocalPaperTradingRepository(this.#database);
     this.#information = new LocalInformationRepository(this.#database);
+    this.#marketSnapshots = new LocalMarketSnapshotRepository(this.#database);
     this.#instrumentMaster = new KisDomesticInstrumentMaster({
       userDataPath: options.userDataPath,
     });
@@ -1022,7 +1029,7 @@ export class DesktopRuntime {
         credentials,
         getAccessToken: () => auth.getAccessToken(),
       }).getVolumeRanking(sort);
-      const dailyItems = [...ranking.items];
+      const dailyItems = ranking.items.filter(isUsableDailyRankingItem);
       if (sort === "AVERAGE_VOLUME") {
         dailyItems.sort((left, right) => {
           const leftVolume = /^\d+$/.test(left.cumulativeVolume)
@@ -1048,9 +1055,11 @@ export class DesktopRuntime {
         source: ranking.source,
         fetchedAt: ranking.fetchedAt,
         statusMessage:
-          sort === "AVERAGE_VOLUME"
-            ? "KIS 평균거래량 상위 후보군을 조회 거래일 현재 거래량순으로 재정렬했습니다."
-            : "KIS KRX 조회 거래일 데이터입니다. 거래량·거래대금은 거래일마다 새로 시작하며, 거래량 증감률은 조회 거래일과 전 거래일 전체를 비교합니다.",
+          dailyItems.length === 0
+            ? "KIS 조회 거래일에 체결된 거래가 아직 없어 순위를 표시하지 않습니다. 장 시작 전 0 거래량을 -100%로 계산하지 않습니다."
+            : sort === "AVERAGE_VOLUME"
+              ? "KIS 평균거래량 상위 후보군을 조회 거래일 현재 거래량순으로 재정렬했습니다."
+              : "KIS KRX 조회 거래일 데이터입니다. 거래량·거래대금은 거래일마다 새로 시작하며, 거래량 증감률은 조회 거래일과 전 거래일 전체를 비교합니다.",
         items: dailyItems
           .slice(0, 100)
           .map((item, index) => ({
@@ -1786,6 +1795,7 @@ export class DesktopRuntime {
     this.#chartRequests.clear();
     this.#marketSequence = 0n;
     this.#lastProcessedTradeIdentity = null;
+    this.#lastOrderBookSnapshotWriteAt = 0;
     this.#setMarket(initialMarket(rawSymbol));
     this.#setChart(initialChart(rawSymbol));
     return this.connectMarketReadOnly();
@@ -1847,6 +1857,34 @@ export class DesktopRuntime {
         rest.getDomesticOrderBook(symbol),
       ]);
       if (!isCurrentConnection()) return this.#market;
+      const hasRestOrderBook =
+        orderBook.providerTime !== "000000" &&
+        orderBook.bids.length + orderBook.asks.length > 0;
+      if (hasRestOrderBook) {
+        this.#marketSnapshots.saveDomesticOrderBook({
+          instrumentId: orderBook.instrumentId,
+          venue: orderBook.venue,
+          bids: [...orderBook.bids],
+          asks: [...orderBook.asks],
+          totalBidQuantity: orderBook.totalBidQuantity,
+          totalAskQuantity: orderBook.totalAskQuantity,
+          providerTime: orderBook.providerTime,
+          providerReceivedAt: orderBook.receivedAt,
+        });
+        this.#lastOrderBookSnapshotWriteAt = Date.now();
+      }
+      const restoredOrderBook = hasRestOrderBook
+        ? null
+        : this.#marketSnapshots.getDomesticOrderBook(`KRX:${symbol}`);
+      const displayedBids = hasRestOrderBook
+        ? orderBook.bids
+        : (restoredOrderBook?.bids ?? []);
+      const displayedAsks = hasRestOrderBook
+        ? orderBook.asks
+        : (restoredOrderBook?.asks ?? []);
+      const displayedProviderTime = hasRestOrderBook
+        ? orderBook.providerTime
+        : (restoredOrderBook?.providerTime ?? null);
       this.#marketSequence += 1n;
       this.#setMarket({
         ...this.#market,
@@ -1860,19 +1898,28 @@ export class DesktopRuntime {
         openPrice: quote.openPrice,
         highPrice: quote.highPrice,
         lowPrice: quote.lowPrice,
-        bids: orderBook.bids,
-        asks: orderBook.asks,
-        totalBidQuantity: orderBook.totalBidQuantity,
-        totalAskQuantity: orderBook.totalAskQuantity,
-        providerTime: orderBook.providerTime,
-        orderBookReceivedAt: orderBook.receivedAt,
+        bids: displayedBids,
+        asks: displayedAsks,
+        totalBidQuantity: hasRestOrderBook
+          ? orderBook.totalBidQuantity
+          : (restoredOrderBook?.totalBidQuantity ?? null),
+        totalAskQuantity: hasRestOrderBook
+          ? orderBook.totalAskQuantity
+          : (restoredOrderBook?.totalAskQuantity ?? null),
+        providerTime: displayedProviderTime,
+        orderBookReceivedAt: hasRestOrderBook
+          ? orderBook.receivedAt
+          : (restoredOrderBook?.providerReceivedAt ?? null),
         orderBookOccurredAt: null,
-        session: domesticSessionFromProviderTime(orderBook.providerTime),
+        session: domesticSessionFromProviderTime(displayedProviderTime ?? ""),
         freshness: "stale",
         receivedAt: quote.receivedAt,
         sequence: this.#marketSequence.toString(),
-        statusMessage:
-          "KIS REST 최종 호가 10단계 · WebSocket 실시간 갱신 대기",
+        statusMessage: hasRestOrderBook
+          ? "KIS REST 실제 호가 10단계 · WebSocket 실시간 갱신 대기"
+          : restoredOrderBook !== null
+            ? `SQLite 최종 실제 호가 · ${restoredOrderBook.providerReceivedAt} · WebSocket 갱신 대기`
+            : "KIS 현재가 수신 · 장외 빈 호가 · 저장된 최종 실제 호가 없음",
       });
 
       const stream = new DomesticKisLiveStream({
@@ -2082,6 +2129,27 @@ export class DesktopRuntime {
           }
         : {}),
     };
+    const liveBook = projection.orderBook;
+    if (
+      liveBook !== null &&
+      liveBook.providerTime !== null &&
+      liveBook.providerTime !== "000000" &&
+      projection.lastOrderBookReceivedAt !== null &&
+      liveBook.bids.length + liveBook.asks.length > 0 &&
+      Date.now() - this.#lastOrderBookSnapshotWriteAt >= 1_000
+    ) {
+      this.#marketSnapshots.saveDomesticOrderBook({
+        instrumentId: liveBook.instrumentId,
+        venue: "KRX",
+        bids: [...liveBook.bids],
+        asks: [...liveBook.asks],
+        totalBidQuantity: liveBook.totalBidQuantity,
+        totalAskQuantity: liveBook.totalAskQuantity,
+        providerTime: liveBook.providerTime,
+        providerReceivedAt: projection.lastOrderBookReceivedAt,
+      });
+      this.#lastOrderBookSnapshotWriteAt = Date.now();
+    }
     this.#setMarket(desktopProjection);
     this.#processPassiveObservedTrade(projection);
     return desktopProjection;

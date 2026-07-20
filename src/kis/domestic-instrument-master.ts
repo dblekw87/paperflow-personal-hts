@@ -10,6 +10,7 @@ import { dirname, join } from "node:path";
 import { unzipSync } from "fflate";
 
 export type DomesticInstrumentMarket = "KOSPI" | "KOSDAQ";
+export type DomesticSecurityType = "STOCK" | "ETF" | "ETN" | "OTHER";
 
 export interface DomesticInstrumentRecord {
   readonly instrumentId: string;
@@ -17,6 +18,7 @@ export interface DomesticInstrumentRecord {
   readonly standardCode: string;
   readonly name: string;
   readonly market: DomesticInstrumentMarket;
+  readonly securityType: DomesticSecurityType;
 }
 
 export interface DomesticInstrumentSearchResult {
@@ -34,7 +36,7 @@ interface MasterDescriptor {
 }
 
 interface CachedMaster {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 2;
   readonly fetchedAt: string;
   readonly items: readonly DomesticInstrumentRecord[];
 }
@@ -93,6 +95,7 @@ function isDomesticInstrumentRecord(
     item["name"].length <= 120 &&
     !/[\u0000-\u001f\u007f\ufffd]/u.test(item["name"]) &&
     (item["market"] === "KOSPI" || item["market"] === "KOSDAQ")
+    && ["STOCK", "ETF", "ETN", "OTHER"].includes(String(item["securityType"]))
   );
 }
 
@@ -102,7 +105,7 @@ function readCache(path: string): CachedMaster | null {
     if (typeof value !== "object" || value === null) return null;
     const cache = value as Record<string, unknown>;
     if (
-      cache["schemaVersion"] !== 1 ||
+      cache["schemaVersion"] !== 2 ||
       typeof cache["fetchedAt"] !== "string" ||
       !Number.isFinite(Date.parse(cache["fetchedAt"])) ||
       !Array.isArray(cache["items"]) ||
@@ -174,6 +177,18 @@ export function parseDomesticInstrumentMaster(
     const symbol = line.slice(0, 9).trim();
     const standardCode = line.slice(9, 21).trim();
     const name = line.slice(21, identityLength).trim();
+    const securityGroupCode = line
+      .slice(identityLength, identityLength + 2)
+      .trim()
+      .toLocaleUpperCase("en-US");
+    const securityType: DomesticSecurityType =
+      securityGroupCode === "ST"
+        ? "STOCK"
+        : securityGroupCode === "EF"
+          ? "ETF"
+          : securityGroupCode === "EN"
+            ? "ETN"
+            : "OTHER";
     if (
       !/^[0-9A-Z]{6,7}$/.test(symbol) ||
       standardCode.length === 0 ||
@@ -188,6 +203,7 @@ export function parseDomesticInstrumentMaster(
       standardCode,
       name,
       market: descriptor.market,
+      securityType,
     });
   }
   return items;
@@ -266,7 +282,7 @@ export class KisDomesticInstrumentMaster {
     readonly fetchImpl?: typeof fetch;
     readonly minimumRecordsPerMarket?: number;
   }) {
-    this.#cachePath = join(options.userDataPath, "instrument-master-v1.json");
+    this.#cachePath = join(options.userDataPath, "instrument-master-v2.json");
     this.#fetch = options.fetchImpl ?? fetch;
     this.#minimumRecordsPerMarket = options.minimumRecordsPerMarket ?? 500;
     if (
@@ -344,7 +360,7 @@ export class KisDomesticInstrumentMaster {
         throw new Error("KIS instrument master item count is invalid");
       }
       const fresh: CachedMaster = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         fetchedAt: new Date().toISOString(),
         items: [...deduplicated.values()],
       };

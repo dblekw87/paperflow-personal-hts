@@ -28,7 +28,9 @@ describe("desktop HTS UI safety invariants", () => {
     expect(orderBook).toBeGreaterThan(gridStart);
     expect(chart).toBeGreaterThan(orderBook);
     expect(ticket).toBe(-1);
-    expect(app).toContain('depthLabel="KRX 10호가"');
+    expect(app).toContain('depthLabel={isReferenceOrderBook');
+    expect(app).toContain('"KRX 10호가"');
+    expect(app).toContain('"잔량 미수신"');
   });
 
   it("labels fixture data and every order affordance as local simulation", () => {

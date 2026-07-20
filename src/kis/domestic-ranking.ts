@@ -93,7 +93,7 @@ export function calculateDailyVolumeChangeRate(
 
   const today = BigInt(todayVolume);
   const previous = BigInt(previousTradingDayVolume);
-  if (previous === 0n) {
+  if (today === 0n || previous === 0n) {
     return null;
   }
 
@@ -110,6 +110,33 @@ export function calculateDailyVolumeChangeRate(
   const fraction = String(absoluteHundredths % 100n).padStart(2, "0");
   const sign = signedHundredths < 0n ? "-" : "";
   return `${sign}${integer}.${fraction}`;
+}
+
+export function isUsableDailyRankingItem(
+  item: Pick<
+    DomesticVolumeRankItem,
+    | "price"
+    | "changeRate"
+    | "cumulativeVolume"
+    | "cumulativeTurnover"
+  >,
+): boolean {
+  if (
+    !/^\d+$/.test(item.price) ||
+    !/^\d+$/.test(item.cumulativeVolume) ||
+    !/^\d+$/.test(item.cumulativeTurnover) ||
+    BigInt(item.price) === 0n ||
+    BigInt(item.cumulativeVolume) === 0n ||
+    BigInt(item.cumulativeTurnover) === 0n
+  ) {
+    return false;
+  }
+  const changeRate = Number(item.changeRate);
+  return (
+    Number.isFinite(changeRate) &&
+    changeRate >= -30 &&
+    changeRate <= 30
+  );
 }
 
 export function compareDailyVolumeRatioDescending(

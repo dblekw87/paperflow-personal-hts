@@ -2,7 +2,10 @@ import { readFileSync } from "node:fs";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { KisDomesticFluctuationClient } from "../src/kis/domestic-fluctuation.js";
+import {
+  isUsableDailyFluctuationItem,
+  KisDomesticFluctuationClient,
+} from "../src/kis/domestic-fluctuation.js";
 
 const capturedProdResponse = JSON.parse(
   readFileSync(
@@ -19,6 +22,30 @@ afterEach(() => {
 });
 
 describe("KisDomesticFluctuationClient", () => {
+  it("rejects pre-open zero-volume and impossible change rows", () => {
+    const valid = {
+      rank: "1",
+      symbol: "320000",
+      name: "한울반도체",
+      price: "15970",
+      change: "100",
+      changeRate: "0.63",
+      cumulativeVolume: "1200",
+      highPrice: null,
+      lowPrice: null,
+      periodChange: null,
+      periodChangeRate: null,
+    };
+    expect(isUsableDailyFluctuationItem(valid)).toBe(true);
+    expect(
+      isUsableDailyFluctuationItem({
+        ...valid,
+        cumulativeVolume: "0",
+        changeRate: "-100.00",
+      }),
+    ).toBe(false);
+  });
+
   it("uses the official prod-only request and normalizes the captured response", async () => {
     vi.stubGlobal(
       "fetch",

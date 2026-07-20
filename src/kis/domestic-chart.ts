@@ -78,7 +78,7 @@ export const KIS_DOMESTIC_CHART_POLICY = Object.freeze({
   },
   intradayPageSizeLimit: INTRADAY_PAGE_SIZE,
   dailyPageSizeLimit: DAILY_PAGE_SIZE,
-  intradayCoverage: "CURRENT_KRX_BUSINESS_DAY_ONLY",
+  intradayCoverage: "LATEST_AVAILABLE_KRX_BUSINESS_DAY_ONLY",
   actualOrderCapability: "FORBIDDEN",
 });
 
@@ -143,6 +143,20 @@ export class KisDomesticChartClient {
       for (const row of pageRows) {
         const businessDate = row.stck_bsop_date.trim();
         assertProviderDate(businessDate);
+        const providerTime = row.stck_cntg_hour.trim();
+        assertProviderTime(providerTime);
+        const openedAt = providerInstant(
+          businessDate,
+          providerTime === "153000"
+            ? "152900"
+            : `${providerTime.slice(0, 4)}00`,
+        );
+        // Before the regular session KIS can expose today's rows stamped with
+        // later session times. They are not observable candles yet. Ignoring
+        // them also lets backward pagination reach the prior business day.
+        if (openedAt.getTime() > fetchedAt.getTime()) {
+          continue;
+        }
         observedBusinessDate ??= businessDate;
         if (businessDate !== observedBusinessDate) {
           // The final 09:00 boundary page can include rows from the prior
@@ -157,7 +171,10 @@ export class KisDomesticChartClient {
           row,
         );
       }
-      if (currentBusinessDayRows.length === 0) {
+      if (
+        currentBusinessDayRows.length === 0 &&
+        observedBusinessDate !== undefined
+      ) {
         complete = true;
         break;
       }
@@ -171,7 +188,11 @@ export class KisDomesticChartClient {
         complete = true;
         break;
       }
-      const oldest = oldestProviderTime(currentBusinessDayRows);
+      const oldest = oldestProviderTime(
+        currentBusinessDayRows.length > 0
+          ? currentBusinessDayRows
+          : pageRows,
+      );
       const next = previousMinuteCursor(oldest);
       if (next === null || next < "090000") {
         complete = true;
@@ -219,14 +240,15 @@ export class KisDomesticChartClient {
         nextCursor: complete ? null : cursor,
       },
       quality: {
-        coverage: "CURRENT_KRX_BUSINESS_DAY_ONLY",
+        coverage: "LATEST_AVAILABLE_KRX_BUSINESS_DAY_ONLY",
         priceAdjustment: "CURRENT_SESSION_ORIGINAL",
         volume: "PROVIDER_REPORTED",
         turnover: "UNAVAILABLE",
         caveats: [
           "LATEST_MINUTE_VOLUME_MAY_CARRY_PREVIOUS_MINUTE_UNTIL_FIRST_TRADE",
           "MINUTE_TURNOVER_IS_UNAVAILABLE_BECAUSE_KIS_REPORTS_CUMULATIVE_TURNOVER",
-          "MINUTE_ENDPOINT_DOES_NOT_PROVIDE_PRIOR_BUSINESS_DAYS",
+          "MINUTE_ENDPOINT_RETURNS_ONLY_ONE_LATEST_AVAILABLE_BUSINESS_DAY",
+          "PREOPEN_RESPONSE_MAY_RESOLVE_TO_THE_PREVIOUS_BUSINESS_DAY",
           "CLOSING_AUCTION_INDICATIVE_ROWS_EXCLUDED",
         ],
       },
@@ -299,6 +321,11 @@ export class KisDomesticChartClient {
     }
 
     const candles = [...rows.values()]
+      .filter(
+        (row) =>
+          providerInstant(row.stck_bsop_date.trim(), "090000").getTime() <=
+          fetchedAt.getTime(),
+      )
       .map((row) => toDailyCandle(request.symbol, row, fetchedAt, adjusted))
       .sort((left, right) => left.openedAt.localeCompare(right.openedAt));
     return DomesticCandleHistorySchema.parse({

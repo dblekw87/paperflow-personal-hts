@@ -15,6 +15,7 @@ import type {
   PaperOrderCommand,
 } from "../src/contracts/paper-order.js";
 import { openUserDataDatabase } from "../src/storage/database.js";
+import { LocalMarketSnapshotRepository } from "../src/storage/market-snapshot-repository.js";
 import { LocalPaperTradingRepository } from "../src/storage/paper-repository.js";
 
 const temporaryDirectories: string[] = [];
@@ -284,6 +285,22 @@ describe("Electron desktop runtime boundary", () => {
       orderBookReceivedAt: receivedAt,
     });
     await runtime.close();
+
+    const reopened = openUserDataDatabase(userDataPath);
+    try {
+      expect(
+        new LocalMarketSnapshotRepository(
+          reopened.database,
+        ).getDomesticOrderBook("KRX:005930"),
+      ).toMatchObject({
+        bids: [{ price: "69900", quantity: "100" }],
+        asks: [{ price: "70100", quantity: "100" }],
+        providerTime: "101500",
+        providerReceivedAt: receivedAt,
+      });
+    } finally {
+      reopened.database.close();
+    }
   });
 
   it("rejects an invalid instrument selection before any KIS connection", async () => {
