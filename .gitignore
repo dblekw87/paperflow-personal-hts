@@ -15,4 +15,5 @@ data/
 .DS_Store
 Thumbs.db
 .capture-electron-profile/
+.capture-live-electron-profile/
 artifacts/

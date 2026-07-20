@@ -23,6 +23,7 @@
     "desktop:build": "npm run desktop:typecheck && npm run desktop:build:renderer && npm run desktop:build:electron",
     "desktop:smoke:preload": "npm run desktop:build && electron scripts/smoke-sandboxed-preload.cjs",
     "desktop:capture": "npm run desktop:build:renderer && electron scripts/capture-desktop-preview.cjs",
+    "desktop:capture:live": "npm run desktop:build && electron apps/desktop/dist-electron/apps/desktop/src/main/main.js --portfolio-capture",
     "desktop:dev": "npm run desktop:build:electron && concurrently -k \"vite\" \"wait-on http://localhost:5173 && electron apps/desktop/dist-electron/apps/desktop/src/main/main.js --dev\"",
     "desktop:start": "npm run desktop:build && electron apps/desktop/dist-electron/apps/desktop/src/main/main.js",
     "check": "npm run typecheck && npm run desktop:typecheck && npm test && npm run health"

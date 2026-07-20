@@ -8,6 +8,7 @@ import {
 } from "electron";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join, resolve } from "node:path";
+import { mkdirSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 
 import {
@@ -21,6 +22,16 @@ import { DesktopRuntimeClient } from "./desktop-runtime-client.js";
 
 const APP_METADATA_CHANNEL = DESKTOP_CHANNELS.appMetadata;
 const LOCAL_DEV_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
+const PORTFOLIO_CAPTURE_MODE = process.argv.includes("--portfolio-capture");
+
+if (PORTFOLIO_CAPTURE_MODE) {
+  const captureProfilePath = resolve(
+    process.cwd(),
+    ".capture-live-electron-profile",
+  );
+  mkdirSync(captureProfilePath, { recursive: true });
+  app.setPath("userData", captureProfilePath);
+}
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
 // Sandboxed Electron preload scripts run in a restricted CommonJS context.
@@ -43,6 +54,114 @@ let mainWindow: BrowserWindow | null = null;
 let trustedRendererUrl: URL | null = null;
 let desktopRuntime: DesktopRuntimeClient | null = null;
 let shutdownStarted = false;
+
+function wait(milliseconds: number): Promise<void> {
+  return new Promise((resolveReady) => setTimeout(resolveReady, milliseconds));
+}
+
+async function waitForRendererCondition(
+  window: BrowserWindow,
+  expression: string,
+  timeoutMs: number,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const ready = (await window.webContents
+      .executeJavaScript(`Boolean(${expression})`)
+      .catch(() => false)) as boolean;
+    if (ready) return;
+    await wait(500);
+  }
+  throw new Error(`Portfolio capture data condition timed out: ${expression}`);
+}
+
+async function capturePortfolioPage(
+  window: BrowserWindow,
+  outputPath: string,
+): Promise<void> {
+  await wait(350);
+  const image = await window.webContents.capturePage();
+  await writeFile(outputPath, image.toPNG());
+}
+
+async function capturePortfolio(window: BrowserWindow): Promise<void> {
+  const imageDirectory = resolve(process.cwd(), "docs", "images");
+  await mkdir(imageDirectory, { recursive: true });
+
+  await waitForRendererCondition(
+    window,
+    `!document.body.innerText.includes("FIXTURE UI") &&
+      !document.body.innerText.includes("SYNTHETIC_UI_FIXTURE") &&
+      document.querySelectorAll(".pt-order-book__row").length >= 20 &&
+      document.querySelectorAll(".market-chart__candle").length > 0 &&
+      !["", "—"].includes(
+        document.querySelector(".pt-instrument-header__quote")?.innerText?.trim() ?? ""
+      )`,
+    45_000,
+  );
+  await capturePortfolioPage(
+    window,
+    join(imageDirectory, "paperflow-dashboard.png"),
+  );
+
+  await window.webContents.executeJavaScript(
+    `document.querySelector('button[aria-label="종목 순위"]')?.click()`,
+  );
+  await waitForRendererCondition(
+    window,
+    `document.querySelectorAll(".pt-ranking-table-wrap tbody tr").length >= 10`,
+    45_000,
+  );
+  await capturePortfolioPage(
+    window,
+    join(imageDirectory, "paperflow-rankings.png"),
+  );
+
+  await window.webContents.executeJavaScript(
+    `document.querySelector('button[aria-label="뉴스와 공시"]')?.click()`,
+  );
+  await waitForRendererCondition(
+    window,
+    `document.querySelectorAll(".pt-information-feed > li").length > 0`,
+    45_000,
+  );
+  await capturePortfolioPage(
+    window,
+    join(imageDirectory, "paperflow-news.png"),
+  );
+
+  await window.webContents.executeJavaScript(
+    `document.querySelector('button[aria-label="시장 대시보드"]')?.click()`,
+  );
+  await waitForRendererCondition(
+    window,
+    `document.querySelectorAll(".market-chart__candle").length > 0`,
+    15_000,
+  );
+  window.setSize(1366, 800);
+  await capturePortfolioPage(
+    window,
+    join(imageDirectory, "paperflow-responsive.png"),
+  );
+
+  window.setSize(1800, 1040);
+  await window.webContents.executeJavaScript(
+    `document.documentElement.setAttribute("data-theme", "light")`,
+  );
+  await capturePortfolioPage(
+    window,
+    join(imageDirectory, "paperflow-light.png"),
+  );
+
+  const evidence = await window.webContents.executeJavaScript(`({
+    hasFixtureBadge: document.body.innerText.includes("FIXTURE UI"),
+    hasSyntheticChart: document.body.innerText.includes("SYNTHETIC_UI_FIXTURE"),
+    orderBookRows: document.querySelectorAll(".pt-order-book__row").length,
+    chartCandles: document.querySelectorAll(".market-chart__candle").length,
+    quoteText: document.querySelector(".pt-instrument-header__quote")?.innerText ?? null
+  })`);
+  console.log(JSON.stringify({ portfolioCapture: true, ...evidence }));
+}
 
 function getDevelopmentRendererUrl(): URL | null {
   if (app.isPackaged) {
@@ -350,7 +469,10 @@ async function createMainWindow(): Promise<void> {
     await window.loadFile(packagedRendererPath);
   }
 
-  if (process.argv.includes("--diagnostic-smoke")) {
+  if (PORTFOLIO_CAPTURE_MODE) {
+    await capturePortfolio(window);
+    window.close();
+  } else if (process.argv.includes("--diagnostic-smoke")) {
     await new Promise((resolveReady) => setTimeout(resolveReady, 12_000));
     const result = (await window.webContents.executeJavaScript(`({
       bridgeType: typeof window.paperTradingDesktop,
