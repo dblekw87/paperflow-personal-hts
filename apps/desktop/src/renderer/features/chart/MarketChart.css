@@ -256,11 +256,31 @@
 }
 
 .market-chart__axis-label,
+.market-chart__time-axis-label,
 .market-chart__panel-label,
 .market-chart__fill-label,
 .market-chart__tooltip text {
   font-size: var(--font-size-xs);
   font-variant-numeric: tabular-nums;
+}
+
+.market-chart__time-axis-line,
+.market-chart__time-axis-tick {
+  stroke: var(--color-border-strong);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.market-chart__time-axis-minor {
+  stroke: var(--chart-grid);
+  stroke-width: 1;
+  opacity: 0.55;
+  vector-effect: non-scaling-stroke;
+}
+
+.market-chart__time-axis-label {
+  fill: var(--color-text-primary);
+  font-weight: var(--font-weight-medium);
 }
 
 .market-chart__reference line {

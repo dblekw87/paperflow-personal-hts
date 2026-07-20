@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   MAX_RENDERED_CHART_CANDLES,
+  MAX_RENDERED_ONE_MINUTE_CANDLES,
   downsampleCandlesForView,
 } from "../apps/desktop/src/renderer/features/chart/chart-view-sampling.js";
 
@@ -63,5 +64,33 @@ describe("long-range chart view sampling", () => {
     expect(() => downsampleCandlesForView([candle], 0)).toThrow(
       /positive integer/,
     );
+  });
+
+  it("keeps a complete KRX one-minute session one-to-one", () => {
+    const candles = Array.from({ length: 380 }, (_, index) => ({
+      id: `minute-${index}`,
+      openedAt: new Date(
+        Date.parse("2026-07-20T00:00:00.000Z") + index * 60_000,
+      ).toISOString(),
+      open: String(100 + index),
+      high: String(101 + index),
+      low: String(99 + index),
+      close: String(100 + index),
+      volume: String(index),
+      turnover: null,
+    }));
+
+    const buckets = downsampleCandlesForView(
+      candles,
+      MAX_RENDERED_ONE_MINUTE_CANDLES,
+    );
+
+    expect(buckets).toHaveLength(380);
+    expect(
+      buckets.every(
+        (bucket) => bucket.sourceStartIndex === bucket.sourceEndIndex,
+      ),
+    ).toBe(true);
+    expect(buckets[200]?.candle).toEqual(candles[200]);
   });
 });

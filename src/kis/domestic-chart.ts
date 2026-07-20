@@ -110,7 +110,7 @@ export class KisDomesticChartClient {
     request: DomesticIntradayCandleRequest,
   ): Promise<DomesticCandleHistory> {
     assertSymbol(request.symbol);
-    const maxPages = boundedMaxPages(request.maxPages, 14);
+    const maxPages = boundedMaxPages(request.maxPages, 24);
     const fetchedAt = this.#clock();
     let cursor = request.beforeOrAt ?? formatKrxTime(fetchedAt);
     assertProviderTime(cursor);
@@ -139,6 +139,7 @@ export class KisDomesticChartClient {
         break;
       }
       const currentBusinessDayRows: IntradayRow[] = [];
+      let reachedDifferentBusinessDate = false;
       for (const row of pageRows) {
         const businessDate = row.stck_bsop_date.trim();
         assertProviderDate(businessDate);
@@ -147,6 +148,7 @@ export class KisDomesticChartClient {
           // The final 09:00 boundary page can include rows from the prior
           // business day when FID_PW_DATA_INCU_YN=Y. This product contract is
           // current-day-only, so keep the observed day and discard spillover.
+          reachedDifferentBusinessDate = true;
           continue;
         }
         currentBusinessDayRows.push(row);
@@ -159,13 +161,19 @@ export class KisDomesticChartClient {
         complete = true;
         break;
       }
+      if (reachedDifferentBusinessDate) {
+        complete = true;
+        break;
+      }
+      if (cursor === "090000") {
+        // Only a provider request at the session boundary can prove whether
+        // the 09:00 candle exists. A prior page ending at 09:01 is not enough.
+        complete = true;
+        break;
+      }
       const oldest = oldestProviderTime(currentBusinessDayRows);
       const next = previousMinuteCursor(oldest);
-      if (
-        next === null ||
-        next < "090000" ||
-        currentBusinessDayRows.length < INTRADAY_PAGE_SIZE
-      ) {
+      if (next === null || next < "090000") {
         complete = true;
         cursor = next ?? cursor;
         break;

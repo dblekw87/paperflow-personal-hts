@@ -8,7 +8,14 @@ import {
 } from "react";
 
 import "./MarketChart.css";
-import { downsampleCandlesForView } from "./chart-view-sampling.js";
+import {
+  downsampleCandlesForView,
+  MAX_RENDERED_ONE_MINUTE_CANDLES,
+} from "./chart-view-sampling.js";
+import {
+  chartTimeAxisTickIndexes,
+  formatChartTimeAxisLabel,
+} from "./chart-time-axis.js";
 
 export type ChartInterval =
   | "1m"
@@ -73,6 +80,10 @@ export interface MarketChartProps {
     | "KIS_CANONICAL_MARKET_DATA"
     | "SYNTHETIC_UI_FIXTURE"
     | "UNAVAILABLE";
+  readonly turnoverQuality?:
+    | "PROVIDER_REPORTED"
+    | "LOCAL_TRADE_AGGREGATE"
+    | "UNAVAILABLE";
   readonly onIntervalChange: (interval: ChartInterval) => void;
   readonly onRangeChange: (range: ChartRange) => void;
   readonly onIndicatorToggle: (indicatorId: string, visible: boolean) => void;
@@ -100,11 +111,13 @@ interface Scale {
 const VIEW_WIDTH = 1_000;
 const VIEW_HEIGHT = 580;
 const PLOT_LEFT = 18;
-const PLOT_RIGHT = 918;
+const PLOT_RIGHT = 890;
 const PRICE_AXIS_X = PLOT_RIGHT + 8;
 const PRICE_TOP = 18;
 const PRICE_BOTTOM = 338;
-const VOLUME_TOP = 375;
+const TIME_AXIS_Y = 348;
+const TIME_LABEL_Y = 366;
+const VOLUME_TOP = 395;
 const VOLUME_BOTTOM = 558;
 const TURNOVER_TOP = VOLUME_TOP;
 const TURNOVER_BOTTOM = 558;
@@ -141,6 +154,9 @@ function scaleFor(values: readonly number[], includeZero = false): Scale {
   const rawMin = includeZero ? Math.min(0, ...values) : Math.min(...values);
   const rawMax = Math.max(...values);
   if (rawMin === rawMax) {
+    if (includeZero && rawMax === 0) {
+      return { min: 0, max: 1 };
+    }
     const padding = Math.max(Math.abs(rawMin) * 0.01, 1);
     return { min: rawMin - padding, max: rawMax + padding };
   }
@@ -267,6 +283,8 @@ function formatTimestamp(value: string): string {
     return value;
   }
   return new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
@@ -294,6 +312,7 @@ export function MarketChart({
   previousClosePrice,
   freshness,
   marketDataSource = "SYNTHETIC_UI_FIXTURE",
+  turnoverQuality = "UNAVAILABLE",
   onIntervalChange,
   onRangeChange,
   onIndicatorToggle,
@@ -317,8 +336,12 @@ export function MarketChart({
     [candles],
   );
   const viewBuckets = useMemo(
-    () => downsampleCandlesForView(sourceCandles),
-    [sourceCandles],
+    () =>
+      downsampleCandlesForView(
+        sourceCandles,
+        interval === "1m" ? MAX_RENDERED_ONE_MINUTE_CANDLES : undefined,
+      ),
+    [interval, sourceCandles],
   );
   const usableCandles = useMemo(
     () =>
@@ -332,8 +355,11 @@ export function MarketChart({
     usableCandles.length === 0
       ? PLOT_RIGHT - PLOT_LEFT
       : (PLOT_RIGHT - PLOT_LEFT) / usableCandles.length;
-  const candleWidth = Math.max(1.5, Math.min(11, step * 0.64));
+  const candleWidth = Math.max(1.5, Math.min(28, step * 0.82));
   const xAt = (index: number) => PLOT_LEFT + step * (index + 0.5);
+  const timeAxisTickIndexes = chartTimeAxisTickIndexes(
+    usableCandles.length,
+  );
   const currentPriceValue = finiteNumber(currentPrice);
   const previousCloseValue = finiteNumber(previousClosePrice);
 
@@ -649,7 +675,7 @@ export function MarketChart({
           className="market-chart__canvas"
           viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
           role="img"
-          aria-label={`${instrumentName} ${interval} OHLC 차트. 원본 ${sourceCandles.length}봉 중 ${usableCandles.length}개 시각 버킷, 거래량·거래대금 통합 봉 패널, 로컬 모의 체결 마커 포함`}
+          aria-label={`${instrumentName} ${interval} OHLC 차트. 원본 ${sourceCandles.length}봉 중 ${usableCandles.length}개 시각 버킷, 거래량${turnoverQuality === "UNAVAILABLE" ? "" : "·거래대금"} 봉 패널, 로컬 모의 체결 마커 포함`}
           tabIndex={0}
           onPointerMove={handlePointerMove}
           onPointerLeave={() => setHoveredIndex(null)}
@@ -725,7 +751,7 @@ export function MarketChart({
                   ) + 3
                 }
               >
-                종가 {previousCloseValue.toLocaleString("ko-KR")}
+                전일 종가 {previousCloseValue.toLocaleString("ko-KR")}
               </text>
             </g>
           ) : null}
@@ -733,7 +759,7 @@ export function MarketChart({
           {currentPriceY !== null && currentPriceValue !== null ? (
             <g
               className="market-chart__reference market-chart__reference--current"
-              aria-label={`현재가 ${currentPriceValue.toLocaleString("ko-KR")}`}
+              aria-label={`${freshness === "LIVE" ? "현재가" : "마지막 가격"} ${currentPriceValue.toLocaleString("ko-KR")}`}
             >
               <line
                 x1={PLOT_LEFT}
@@ -762,17 +788,75 @@ export function MarketChart({
                   ) + 3
                 }
               >
-                현재 {currentPriceValue.toLocaleString("ko-KR")}
+                {freshness === "LIVE" ? "현재가" : "마지막"}{" "}
+                {currentPriceValue.toLocaleString("ko-KR")}
               </text>
             </g>
           ) : null}
+
+          <g
+            className="market-chart__time-axis"
+            aria-label="봉 시간축"
+          >
+            <line
+              className="market-chart__time-axis-line"
+              x1={PLOT_LEFT}
+              x2={PLOT_RIGHT}
+              y1={TIME_AXIS_Y}
+              y2={TIME_AXIS_Y}
+            />
+            {usableCandles.map((candle, index) => (
+              <line
+                className="market-chart__time-axis-minor"
+                key={`time-minor-${candle.id}`}
+                x1={xAt(index)}
+                x2={xAt(index)}
+                y1={TIME_AXIS_Y}
+                y2={TIME_AXIS_Y + 3}
+              />
+            ))}
+            {timeAxisTickIndexes.map((index, tickIndex) => {
+              const candle = usableCandles[index]!;
+              return (
+                <g key={`time-label-${candle.id}`}>
+                  <line
+                    className="market-chart__time-axis-tick"
+                    x1={xAt(index)}
+                    x2={xAt(index)}
+                    y1={TIME_AXIS_Y}
+                    y2={TIME_AXIS_Y + 6}
+                  />
+                  <text
+                    className="market-chart__time-axis-label"
+                    x={xAt(index)}
+                    y={TIME_LABEL_Y}
+                    textAnchor={
+                      tickIndex === 0
+                        ? "start"
+                        : tickIndex === timeAxisTickIndexes.length - 1
+                          ? "end"
+                          : "middle"
+                    }
+                  >
+                    {formatChartTimeAxisLabel(
+                      candle.openedAt,
+                      interval,
+                      range,
+                    )}
+                  </text>
+                </g>
+              );
+            })}
+          </g>
 
           <text
             className="market-chart__panel-label"
             x={PLOT_LEFT}
             y={VOLUME_TOP - 7}
           >
-            거래량(방향색) · 거래대금(보라) · 독립 정규화
+            {turnoverQuality === "UNAVAILABLE"
+              ? "거래량(방향색) · 분봉 거래대금 KIS 미제공"
+              : "거래량(방향색) · 거래대금(보라) · 독립 정규화"}
           </text>
           <text
             className="market-chart__panel-label"

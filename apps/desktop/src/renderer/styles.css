@@ -658,7 +658,7 @@ select:focus-visible {
   display: grid;
   grid-template-columns: minmax(500px, 0.95fr) minmax(620px, 1.65fr);
   gap: 8px;
-  align-items: stretch;
+  align-items: start;
 }
 
 .pt-panel,
@@ -1627,6 +1627,31 @@ select:focus-visible {
   grid-template-columns: 1fr 1fr;
   gap: 6px;
   padding: 9px 0;
+}
+
+.pt-news__section-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 2px 2px;
+  border-top: 1px solid var(--color-border-soft);
+}
+
+.pt-news__section-heading:first-of-type {
+  border-top: 0;
+}
+
+.pt-news__section-heading span,
+.pt-news__selection-empty {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.pt-news__selection-empty {
+  padding: 12px 5px;
+  margin: 0;
+  background: var(--color-bg-elevated);
+  border-radius: 5px;
 }
 
 .pt-news__context button {

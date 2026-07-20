@@ -120,7 +120,13 @@ export function OrderBookPanel({
               : "REAL ORDER BOOK"}
           </p>
           <h2 id="order-book-title">
-            {dataMode === "FIXTURE" ? "호가 화면 미리보기" : "실시간 호가"}
+            {dataMode === "FIXTURE"
+              ? "호가 화면 미리보기"
+              : freshness === "closed"
+                ? "장마감 호가 스냅샷"
+                : freshness === "live"
+                  ? "실시간 호가"
+                  : "마지막 수신 호가"}
           </h2>
         </div>
         <div className="pt-panel__actions">

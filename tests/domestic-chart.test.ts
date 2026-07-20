@@ -14,6 +14,7 @@ const dailyFixture = readFixture("domestic-daily-candles.json");
 
 describe("KIS domestic candle REST contract", () => {
   it("maps the official intraday fixture to sorted KRX 1-minute candles", async () => {
+    const cursors: string[] = [];
     const fetchMock = vi.fn(
       async (input: string | URL | Request, init?: RequestInit) => {
         const url = new URL(String(input));
@@ -22,7 +23,7 @@ describe("KIS domestic candle REST contract", () => {
         );
         expect(url.searchParams.get("FID_COND_MRKT_DIV_CODE")).toBe("J");
         expect(url.searchParams.get("FID_INPUT_ISCD")).toBe("005930");
-        expect(url.searchParams.get("FID_INPUT_HOUR_1")).toBe("090230");
+        cursors.push(url.searchParams.get("FID_INPUT_HOUR_1") ?? "");
         expect(url.searchParams.get("FID_PW_DATA_INCU_YN")).toBe("Y");
         const headers = new Headers(init?.headers);
         expect(headers.get("tr_id")).toBe("FHKST03010200");
@@ -36,6 +37,7 @@ describe("KIS domestic candle REST contract", () => {
     const history = await client.getDomesticMinuteCandles({
       symbol: "005930",
       beforeOrAt: "090230",
+      maxPages: 2,
     });
 
     expect(DomesticCandleHistorySchema.parse(history)).toEqual(history);
@@ -61,10 +63,11 @@ describe("KIS domestic candle REST contract", () => {
     });
     expect(history.pagination).toMatchObject({
       pageSizeLimit: 30,
-      pagesFetched: 1,
+      pagesFetched: 2,
       complete: true,
     });
-    expect(beforeRequest).toHaveBeenCalledTimes(1);
+    expect(cursors).toEqual(["090230", "090000"]);
+    expect(beforeRequest).toHaveBeenCalledTimes(2);
   });
 
   it("maps the 15:30 closing-auction candidate to the final minute and excludes indicative rows", async () => {
@@ -158,7 +161,7 @@ describe("KIS domestic candle REST contract", () => {
     const firstPage = Array.from({ length: 30 }, (_, index) =>
       minuteRow(600 - index),
     );
-    const secondPage = [minuteRow(571), minuteRow(570)];
+    const secondPage = [minuteRow(571), minuteRow(540)];
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       const url = new URL(String(input));
       const cursor = url.searchParams.get("FID_INPUT_HOUR_1") ?? "";
@@ -187,6 +190,42 @@ describe("KIS domestic candle REST contract", () => {
       complete: true,
       nextCursor: null,
     });
+  });
+
+  it("continues backward pagination when KIS returns a short non-boundary minute page", async () => {
+    const requests: string[] = [];
+    const firstPage = Array.from({ length: 20 }, (_, index) =>
+      minuteRow(900 - index),
+    );
+    const secondPage = Array.from({ length: 20 }, (_, index) =>
+      minuteRow(880 - index),
+    );
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      requests.push(url.searchParams.get("FID_INPUT_HOUR_1") ?? "");
+      return jsonResponse({
+        rt_cd: "0",
+        output2: requests.length === 1 ? firstPage : secondPage,
+      });
+    });
+    const client = clientWith(
+      fetchMock,
+      undefined,
+      () => new Date("2026-07-20T06:31:00.000Z"),
+    );
+
+    const history = await client.getDomesticMinuteCandles({
+      symbol: "005930",
+      beforeOrAt: "150000",
+      maxPages: 2,
+    });
+
+    expect(requests).toEqual(["150000", "144000"]);
+    expect(history.candles).toHaveLength(40);
+    expect(history.candles.at(-1)?.openedAt).toBe(
+      "2026-07-20T06:00:00.000Z",
+    );
+    expect(history.pagination.complete).toBe(false);
   });
 
   it("ignores previous-business-day spillover on the final intraday page", async () => {

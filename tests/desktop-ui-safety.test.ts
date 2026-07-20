@@ -35,8 +35,8 @@ describe("desktop HTS UI safety invariants", () => {
     expect(app).toContain("isRegularPaperSession");
     expect(app).toContain("activeInstrumentId");
     expect(app).toContain("activeInstrumentName");
-    expect(app).toContain("latestKisCandle?.forming");
-    expect(app).toContain("latestKisCandle.closedAt");
+    expect(app).toContain("applyLiveTradeToCandles");
+    expect(app).toContain("completeSessionHistory");
     expect(app).not.toContain(
       "volume: desktop.market.cumulativeVolume",
     );
@@ -45,9 +45,8 @@ describe("desktop HTS UI safety invariants", () => {
     );
     expect(app).not.toContain('instrumentId="KRX:005930"');
     expect(app).toContain("실제 주문 기능 없음");
-    expect(app).toContain(
-      'KIS WebSocket {isKisLive ? "읽기 전용 연결" : "미연결"}',
-    );
+    expect(app).toContain('KIS WebSocket{" "}');
+    expect(app).toContain('"장외/미연결"');
     expect(app).not.toContain("WS 정상");
     expect(app).not.toContain("SQLite WAL 정상");
     expect(app).not.toMatch(/<OrderTicket(?:\s|>)/);
@@ -152,7 +151,7 @@ describe("desktop HTS UI safety invariants", () => {
     expect(runtime).toContain("KisDomesticChartClient");
     expect(runtime).toContain("getDomesticMinuteCandles");
     expect(runtime).toContain("getDomesticDailyCandles");
-    expect(runtime).toContain("maxPages: 14");
+    expect(runtime).toContain("maxPages: 24");
     expect(runtime).not.toContain('interval === "1m" ? 2 : 14');
     expect(runtime).toContain("aggregateDomesticCandleHistory");
     expect(runtime).toContain("ADVANCED_QUEUE_V1");

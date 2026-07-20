@@ -72,7 +72,19 @@ async function waitForRendererCondition(
     if (ready) return;
     await wait(500);
   }
-  throw new Error(`Portfolio capture data condition timed out: ${expression}`);
+  const diagnostics = await window.webContents
+    .executeJavaScript(`({
+      chartCandles: document.querySelectorAll(".market-chart__candle").length,
+      chartText: [...document.querySelectorAll("body *")]
+        .map((element) => element.textContent?.trim() ?? "")
+        .find((value) => value.startsWith("차트 ·")) ?? null,
+      hasPartialLookup: document.body.innerText.includes("부분 조회"),
+      quote: document.querySelector(".pt-instrument-header__quote")?.innerText ?? null
+    })`)
+    .catch(() => null);
+  throw new Error(
+    `Portfolio capture data condition timed out: ${expression} · ${JSON.stringify(diagnostics)}`,
+  );
 }
 
 async function capturePortfolioPage(
@@ -88,12 +100,18 @@ async function capturePortfolio(window: BrowserWindow): Promise<void> {
   const imageDirectory = resolve(process.cwd(), "docs", "images");
   await mkdir(imageDirectory, { recursive: true });
 
+  await window.webContents.executeJavaScript(
+    `document.querySelector('button[aria-label="시장 대시보드"]')?.click();
+     window.scrollTo(0, 0)`,
+  );
   await waitForRendererCondition(
     window,
-    `!document.body.innerText.includes("FIXTURE UI") &&
+    `document.querySelector('button[aria-label="시장 대시보드"].active') !== null &&
+      !document.body.innerText.includes("FIXTURE UI") &&
       !document.body.innerText.includes("SYNTHETIC_UI_FIXTURE") &&
       document.querySelectorAll(".pt-order-book__row").length >= 20 &&
       document.querySelectorAll(".market-chart__candle").length > 0 &&
+      !document.body.innerText.includes("부분 조회") &&
       !["", "—"].includes(
         document.querySelector(".pt-instrument-header__quote")?.innerText?.trim() ?? ""
       )`,
@@ -102,6 +120,24 @@ async function capturePortfolio(window: BrowserWindow): Promise<void> {
   await capturePortfolioPage(
     window,
     join(imageDirectory, "paperflow-dashboard.png"),
+  );
+
+  await waitForRendererCondition(
+    window,
+    `document.querySelectorAll(".pt-theme-leaders__list > li").length > 0 &&
+      (
+        document.querySelectorAll(".pt-news__list > li").length > 0 ||
+        document.querySelectorAll(".pt-news__context > button").length > 0 ||
+        document.body.innerText.includes("선택 종목 ID가 공급자 메타데이터에 정확히 연결")
+      )`,
+    45_000,
+  );
+  await window.webContents.executeJavaScript(
+    `document.querySelector(".insight-grid")?.scrollIntoView({ block: "start" })`,
+  );
+  await capturePortfolioPage(
+    window,
+    join(imageDirectory, "paperflow-insights.png"),
   );
 
   await window.webContents.executeJavaScript(
@@ -131,7 +167,8 @@ async function capturePortfolio(window: BrowserWindow): Promise<void> {
   );
 
   await window.webContents.executeJavaScript(
-    `document.querySelector('button[aria-label="시장 대시보드"]')?.click()`,
+    `document.querySelector('button[aria-label="시장 대시보드"]')?.click();
+     window.scrollTo(0, 0)`,
   );
   await waitForRendererCondition(
     window,
@@ -146,7 +183,8 @@ async function capturePortfolio(window: BrowserWindow): Promise<void> {
 
   window.setSize(1800, 1040);
   await window.webContents.executeJavaScript(
-    `document.documentElement.setAttribute("data-theme", "light")`,
+    `document.documentElement.setAttribute("data-theme", "light");
+     window.scrollTo(0, 0)`,
   );
   await capturePortfolioPage(
     window,
@@ -158,6 +196,8 @@ async function capturePortfolio(window: BrowserWindow): Promise<void> {
     hasSyntheticChart: document.body.innerText.includes("SYNTHETIC_UI_FIXTURE"),
     orderBookRows: document.querySelectorAll(".pt-order-book__row").length,
     chartCandles: document.querySelectorAll(".market-chart__candle").length,
+    themeCandidates: document.querySelectorAll(".pt-theme-leaders__list > li").length,
+    dashboardNews: document.querySelectorAll(".pt-news__list > li").length,
     quoteText: document.querySelector(".pt-instrument-header__quote")?.innerText ?? null
   })`);
   console.log(JSON.stringify({ portfolioCapture: true, ...evidence }));

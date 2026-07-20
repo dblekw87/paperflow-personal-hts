@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  desktopChartCacheTtlMs,
   resolveDesktopChartRange,
   resolveDesktopIntradayCursor,
 } from "../apps/desktop/src/main/desktop-runtime.js";
@@ -55,5 +56,17 @@ describe("desktop chart calendar ranges", () => {
         new Date("2026-07-20T05:05:06.000Z"),
       ),
     ).toBe("140506");
+    expect(
+      resolveDesktopIntradayCursor(
+        new Date("2026-07-19T17:05:06.000Z"),
+      ),
+    ).toBe("153000");
+  });
+
+  it("uses a short cache for forming daily and weekly candles", () => {
+    expect(desktopChartCacheTtlMs("1m", false)).toBe(15_000);
+    expect(desktopChartCacheTtlMs("1d", true)).toBe(15_000);
+    expect(desktopChartCacheTtlMs("1w", true)).toBe(15_000);
+    expect(desktopChartCacheTtlMs("1d", false)).toBe(21_600_000);
   });
 });

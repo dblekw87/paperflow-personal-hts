@@ -34,8 +34,13 @@ import {
   type MarketCandleViewModel,
   type PaperFillMarkerViewModel,
 } from "../features/chart/MarketChart.js";
+import { applyLiveTradeToCandles } from "../features/chart/live-candle-overlay.js";
 import { useDesktopRuntime } from "../hooks/useDesktopRuntime.js";
 import { formatKrwTurnoverEok } from "../lib/market-format.js";
+import {
+  buildLiveInformationInsights,
+  buildLiveThemeLeaders,
+} from "../model/live-dashboard-insights.js";
 import type { DesktopRankingSort } from "../../shared/desktop-contracts.js";
 
 type ThemePreference = "system" | "dark" | "light";
@@ -375,7 +380,20 @@ function informationProviderLabel(provider: string): string {
   );
 }
 
-function formatInformationTime(value: string): string {
+function formatInformationTime(
+  value: string,
+  precision: "SECOND" | "DATE" = "SECOND",
+): string {
+  if (precision === "DATE") {
+    const timestamp = Date.parse(value);
+    if (!Number.isFinite(timestamp)) return "날짜 미상 · 시각 미제공";
+    return `${new Intl.DateTimeFormat("ko-KR", {
+      timeZone: "Asia/Seoul",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date(timestamp))} · 시각 미제공`;
+  }
   const instant = new Date(value);
   return Number.isFinite(instant.getTime())
     ? instant.toLocaleString("ko-KR", {
@@ -419,6 +437,9 @@ export function App() {
   const [fillMarkers, setFillMarkers] = useState(() =>
     hasDesktopRuntime ? [] : initialMarkers,
   );
+  const [liveChartCandles, setLiveChartCandles] = useState<
+    readonly MarketCandleViewModel[]
+  >([]);
   const [watched, setWatched] = useState(true);
   const [selectedMarket, setSelectedMarket] = useState("국내");
   const [workspacePage, setWorkspacePage] =
@@ -498,12 +519,19 @@ export function App() {
     chartRange,
     desktop.loadChartHistory,
     desktop.market?.instrumentId,
+    desktop.market?.session,
     interval,
   ]);
 
   useEffect(() => {
-    if (!hasDesktopRuntime || workspacePage !== "RANKINGS") return;
-    void desktop.loadDomesticRanking(rankingSort);
+    if (!hasDesktopRuntime) return;
+    if (workspacePage === "DASHBOARD") {
+      void desktop.loadDomesticRanking("TURNOVER");
+      return;
+    }
+    if (workspacePage === "RANKINGS") {
+      void desktop.loadDomesticRanking(rankingSort);
+    }
   }, [
     desktop.loadDomesticRanking,
     hasDesktopRuntime,
@@ -512,7 +540,12 @@ export function App() {
   ]);
 
   useEffect(() => {
-    if (!hasDesktopRuntime || workspacePage !== "NEWS") return;
+    if (
+      !hasDesktopRuntime ||
+      (workspacePage !== "DASHBOARD" && workspacePage !== "NEWS")
+    ) {
+      return;
+    }
     void desktop.loadInformationFeed(false);
     const timer = window.setInterval(() => {
       void desktop.loadInformationFeed(false);
@@ -613,7 +646,11 @@ export function App() {
         ? ("live" as const)
         : desktop.market?.freshness === "stale"
           ? ("stale" as const)
-          : ("offline" as const);
+        : ("offline" as const);
+  const hasClosedRestSnapshot =
+    hasDesktopRuntime &&
+    isClosedMarket &&
+    (desktop.market?.price !== null || hasLastOrderBook);
   const displayedAsks = useMemo(
     () =>
       desktop.market && desktop.market.asks.length > 0
@@ -654,53 +691,77 @@ export function App() {
     desktop.chart.range === chartRange &&
     desktop.chart.instrumentId === activeInstrumentId &&
     desktop.chart.candles.length > 0;
-  const latestKisCandle = hasKisHistory
-    ? desktop.chart!.candles.at(-1)
-    : undefined;
-  const liveTradeAt = Date.parse(desktop.market?.tradeOccurredAt ?? "");
-  const hasLiveChartCandle =
-    isKisLive &&
-    latestKisCandle?.forming === true &&
-    Number.isFinite(liveTradeAt) &&
-    liveTradeAt >= Date.parse(latestKisCandle.openedAt) &&
-    liveTradeAt < Date.parse(latestKisCandle.closedAt);
-  const displayedCandles = useMemo(() => {
-    const baseCandles = hasKisHistory
+  const baseChartCandles = useMemo(
+    () =>
+      hasKisHistory
       ? desktop.chart!.candles
       : hasDesktopRuntime ||
           desktop.chart?.state === "LOADING" ||
           desktop.chart?.state === "ERROR"
         ? []
-        : candles;
+        : candles,
+    [candles, desktop.chart, hasDesktopRuntime, hasKisHistory],
+  );
+  useEffect(() => {
+    setLiveChartCandles(baseChartCandles);
+  }, [baseChartCandles]);
+  useEffect(() => {
+    const market = desktop.market;
     if (
-      !hasLiveChartCandle ||
-      desktop.market?.price === null
+      !isKisLive ||
+      !INTRADAY_CHART_INTERVALS.includes(interval) ||
+      market?.price === null ||
+      market?.price === undefined ||
+      market.tradeOccurredAt === null
     ) {
-      return baseCandles;
+      return;
     }
-    const last = baseCandles.at(-1);
-    if (!last) return baseCandles;
-    const price = Number(desktop.market.price);
-    if (!Number.isFinite(price) || price <= 0) return baseCandles;
-    return [
-      ...baseCandles.slice(0, -1),
-      {
-        ...last,
-        high: String(Math.max(Number(last.high), price)),
-        low: String(Math.min(Number(last.low), price)),
-        close: String(price),
-      },
-    ];
+    setLiveChartCandles((current) =>
+      applyLiveTradeToCandles(
+        current.length > 0 ? current : baseChartCandles,
+        {
+          interval,
+          occurredAt: market.tradeOccurredAt!,
+          price: market.price!,
+          cumulativeVolume: market.cumulativeVolume,
+          completeSessionHistory:
+            desktop.chart?.paginationComplete === true,
+        },
+      ),
+    );
   }, [
-    candles,
-    desktop.chart,
+    baseChartCandles,
+    desktop.chart?.paginationComplete,
     desktop.market,
-    hasKisHistory,
-    hasLiveChartCandle,
-    hasDesktopRuntime,
+    desktop.market?.sequence,
+    interval,
+    isKisLive,
   ]);
+  const displayedCandles =
+    hasKisHistory &&
+    INTRADAY_CHART_INTERVALS.includes(interval) &&
+    liveChartCandles.length > 0
+      ? liveChartCandles
+      : baseChartCandles;
   const activePosition = desktop.account?.positions.find(
     (position) => position.instrumentId === activeInstrumentId,
+  );
+  const liveThemeProjection = useMemo(
+    () => buildLiveThemeLeaders(desktop.ranking),
+    [desktop.ranking],
+  );
+  const liveInformationProjection = useMemo(
+    () =>
+      buildLiveInformationInsights(
+        desktop.informationFeed,
+        activeInstrumentId,
+        activeInstrumentName,
+      ),
+    [
+      activeInstrumentId,
+      activeInstrumentName,
+      desktop.informationFeed,
+    ],
   );
   const sidebarInstruments = hasDesktopRuntime
     ? [
@@ -856,12 +917,18 @@ export function App() {
           />
           <span>
             <strong>
-              {isKisLive ? "KIS READ ONLY" : "KIS READ ONLY 준비"}
+              {isKisLive
+                ? "KIS READ ONLY"
+                : hasClosedRestSnapshot
+                  ? "KIS REST SNAPSHOT"
+                  : "KIS READ ONLY 준비"}
             </strong>
             <small>
               {desktop.loading
                 ? "로컬 projection 준비 중"
-                : (desktop.market?.statusMessage ?? "WS 미연결 · fixture")}
+                : hasClosedRestSnapshot
+                  ? "장마감 마지막 스냅샷 · WS 장외/미연결"
+                  : (desktop.market?.statusMessage ?? "WS 미연결 · fixture")}
             </small>
           </span>
         </div>
@@ -1016,6 +1083,8 @@ export function App() {
           <div className="fixture-badge">
             {isKisLive
               ? "KIS LIVE · READ ONLY"
+              : hasClosedRestSnapshot
+                ? "REST 마지막 스냅샷 · WS 장외/미연결"
               : hasDesktopRuntime
                 ? "KIS 연결 대기 · 합성 시세 없음"
                 : "FIXTURE UI"}
@@ -1202,9 +1271,12 @@ export function App() {
             previousClosePrice={chartPreviousClosePrice}
             freshness={
               hasKisHistory
-                ? hasLiveChartCandle
+                ? isRegularPaperSession &&
+                  INTRADAY_CHART_INTERVALS.includes(interval)
                   ? "LIVE"
-                  : "DELAYED"
+                  : desktop.market?.freshness === "stale"
+                    ? "STALE"
+                    : "DELAYED"
                 : "OFFLINE"
             }
             marketDataSource={
@@ -1213,6 +1285,10 @@ export function App() {
                 : hasDesktopRuntime
                   ? "UNAVAILABLE"
                   : "SYNTHETIC_UI_FIXTURE"
+            }
+            turnoverQuality={
+              desktop.chart?.turnoverQuality ??
+              (hasDesktopRuntime ? "UNAVAILABLE" : "LOCAL_TRADE_AGGREGATE")
             }
             onIntervalChange={handleChartIntervalChange}
             onRangeChange={setChartRange}
@@ -1241,23 +1317,33 @@ export function App() {
 
         <div className="insight-grid">
           <ThemeLeaders
-            items={hasDesktopRuntime ? [] : themes}
+            items={hasDesktopRuntime ? liveThemeProjection.items : themes}
             asOfLabel={
               hasDesktopRuntime
-                ? "실데이터 순위 provider 연결 준비 중"
+                ? liveThemeProjection.asOfLabel
                 : "10:32 KST · 동시간 20일 중앙값 기준"
             }
-            onThemeSelect={(themeId) =>
-              setNotice(`${themeId} 테마 근거 패널을 선택했습니다.`)
-            }
+            onThemeSelect={(themeId) => {
+              setWorkspacePage("RANKINGS");
+              setRankingSort("TURNOVER");
+              setNotice(
+                `${themeId} 후보의 근거인 거래대금 상위 100위 화면으로 이동했습니다.`,
+              );
+            }}
           />
           <NewsPanel
-            news={hasDesktopRuntime ? [] : news}
-            contexts={hasDesktopRuntime ? [] : contexts}
-            onNewsSelect={(id) => setNotice(`${id} 근거 카드를 열었습니다.`)}
-            onContextSelect={(id) =>
-              setNotice(`${id} 글로벌 시황 타임라인을 선택했습니다.`)
+            news={hasDesktopRuntime ? liveInformationProjection.news : news}
+            contexts={
+              hasDesktopRuntime ? liveInformationProjection.contexts : contexts
             }
+            onNewsSelect={(id) => {
+              setWorkspacePage("NEWS");
+              setNotice(`${id} 항목의 실제 뉴스·공시 피드로 이동했습니다.`);
+            }}
+            onContextSelect={(id) => {
+              setWorkspacePage("NEWS");
+              setNotice(`${id} 맥락의 근거 피드로 이동했습니다.`);
+            }}
           />
         </div>
         </div>
@@ -1281,6 +1367,7 @@ export function App() {
                     <p>
                       {desktop.ranking?.statusMessage ??
                         "KIS 읽기 전용 거래 순위를 불러오는 중입니다."}
+                      {" "}카테고리별 최대 100위까지만 표시합니다.
                     </p>
                   </div>
                   <label>
@@ -1338,7 +1425,7 @@ export function App() {
                         </tr>
                       </thead>
                       <tbody>
-                        {desktop.ranking.items.map((item) => {
+                        {desktop.ranking.items.slice(0, 100).map((item) => {
                           const itemDirection = marketDirection(
                             item.changeRate,
                           );
@@ -1602,17 +1689,24 @@ export function App() {
                             {item.kind === "DISCLOSURE" ? "공시" : "뉴스"}
                           </span>
                           <time dateTime={item.publishedAt}>
-                            {formatInformationTime(item.publishedAt)}
+                            {formatInformationTime(
+                              item.publishedAt,
+                              item.publishedAtPrecision,
+                            )}
                           </time>
                         </div>
                         <strong>
-                          {item.titleKorean ?? item.titleOriginal}
+                          {item.sourceLanguage === "ko"
+                            ? item.titleKorean ?? item.titleOriginal
+                            : item.titleOriginal}
                         </strong>
-                        {item.titleKorean !== null &&
-                        item.titleKorean !== item.titleOriginal ? (
-                          <small>{item.titleOriginal}</small>
+                        {item.sourceLanguage !== "ko" &&
+                        item.titleKorean !== null ? (
+                          <small>부분 번역 참고: {item.titleKorean}</small>
                         ) : null}
-                        {item.summaryKorean ? (
+                        {item.rights !== "KIS_HEADLINE_ONLY" &&
+                        item.sourceLanguage === "ko" &&
+                        item.summaryKorean ? (
                           <p>{item.summaryKorean}</p>
                         ) : null}
                         <footer>
@@ -1729,7 +1823,12 @@ export function App() {
             className={isKisLive ? "live-dot" : "offline-dot"}
             aria-hidden="true"
           />{" "}
-          KIS WebSocket {isKisLive ? "읽기 전용 연결" : "미연결"}
+          KIS WebSocket{" "}
+          {isKisLive
+            ? "읽기 전용 연결"
+            : hasClosedRestSnapshot
+              ? "장외/미연결"
+              : "미연결"}
         </span>
         <span>
           {desktop.market?.mode === "KIS_READ_ONLY"

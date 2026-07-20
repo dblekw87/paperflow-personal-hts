@@ -1,4 +1,5 @@
 export const MAX_RENDERED_CHART_CANDLES = 360;
+export const MAX_RENDERED_ONE_MINUTE_CANDLES = 420;
 
 export interface SampleableChartCandle {
   readonly id: string;

@@ -15,6 +15,7 @@
     "probe:nxt": "tsx src/cli/ws-probe.ts --market nxt",
     "probe:us": "tsx src/cli/ws-probe.ts --market us",
     "probe:proxies": "tsx src/cli/ws-probe.ts --market proxy",
+    "probe:chart": "tsx src/cli/chart-probe.ts",
     "probe:rankings": "tsx src/cli/ranking-probe.ts",
     "probe:prod-pages": "tsx src/cli/prod-pages-probe.ts",
     "desktop:typecheck": "tsc --noEmit -p tsconfig.renderer.json && tsc --noEmit -p tsconfig.electron.json",

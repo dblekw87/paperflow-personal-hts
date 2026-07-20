@@ -91,6 +91,15 @@ const DAILY_CHART_CACHE_TTL_MS = 6 * 60 * 60 * 1_000;
 const CHART_REQUEST_MINIMUM_GAP_MS = 1_000;
 const INFORMATION_CACHE_TTL_MS = 30_000;
 
+export function desktopChartCacheTtlMs(
+  interval: DesktopChartInterval,
+  hasFormingCandle: boolean,
+): number {
+  return isIntradayChartInterval(interval) || hasFormingCandle
+    ? MINUTE_CHART_CACHE_TTL_MS
+    : DAILY_CHART_CACHE_TTL_MS;
+}
+
 function readOnlyMarketDataEnvironment(
   config: ReturnType<typeof loadRuntimeConfig>,
 ): "paper" | "prod" {
@@ -532,7 +541,9 @@ export function resolveDesktopIntradayCursor(now = new Date()): string {
   }).formatToParts(now);
   const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   const providerTime = `${values.hour ?? "00"}${values.minute ?? "00"}${values.second ?? "00"}`;
-  return providerTime > "153000" ? "153000" : providerTime;
+  return providerTime < "090000" || providerTime > "153000"
+    ? "153000"
+    : providerTime;
 }
 
 function toDesktopChartProjection(
@@ -734,7 +745,10 @@ export class DesktopRuntime {
             sort === "CHANGE_RATE_GAINERS"
               ? "KIS 실전 등락률 후보를 상승률 순으로 재정렬했습니다."
               : "KIS 실전 등락률 후보를 하락률 순으로 재정렬했습니다.",
-          items: projectDomesticFluctuationItems(ranking.items, sort),
+          items: projectDomesticFluctuationItems(ranking.items, sort).slice(
+            0,
+            100,
+          ),
         };
       }
 
@@ -778,11 +792,13 @@ export class DesktopRuntime {
           sort === "AVERAGE_VOLUME"
             ? "KIS 평균거래량 상위 후보군을 조회 거래일 현재 거래량순으로 재정렬했습니다."
             : "KIS KRX 조회 거래일 데이터입니다. 거래량·거래대금은 거래일마다 새로 시작하며, 거래량 증감률은 조회 거래일과 전 거래일 전체를 비교합니다.",
-        items: dailyItems.map((item, index) => ({
-          ...item,
-          rank: String(index + 1),
-          instrumentId: `KRX:${item.symbol}`,
-        })),
+        items: dailyItems
+          .slice(0, 100)
+          .map((item, index) => ({
+            ...item,
+            rank: String(index + 1),
+            instrumentId: `KRX:${item.symbol}`,
+          })),
       };
     } catch (error) {
       return {
@@ -985,7 +1001,8 @@ export class DesktopRuntime {
             const snapshot = await client.getRecentFilings(
               issuer.providerIssuerId,
             );
-            for (const filing of snapshot.items.slice(0, 100)) {
+            const filingsToPersist = snapshot.items.slice(0, 100);
+            for (const filing of filingsToPersist) {
               const itemId = stableLocalId("sec-filing", [
                 filing.providerFilingId,
               ]);
@@ -1031,8 +1048,8 @@ export class DesktopRuntime {
             sources.push({
               provider: "SEC_EDGAR",
               state: "READY",
-              itemCount: snapshot.items.length,
-              message: `${snapshot.issuerName} 최근 SEC 공시 ${snapshot.items.length}건 수신`,
+              itemCount: filingsToPersist.length,
+              message: `${snapshot.issuerName} SEC 공시 ${filingsToPersist.length}건 로컬 projection`,
             });
             this.#information.saveCheckpoint(
               "SEC_EDGAR",
@@ -1224,10 +1241,10 @@ export class DesktopRuntime {
 
     const cached = this.#chartCache.get(requestKey);
     const isIntraday = isIntradayChartInterval(interval);
-    const cacheTtl =
-      isIntraday
-        ? MINUTE_CHART_CACHE_TTL_MS
-        : DAILY_CHART_CACHE_TTL_MS;
+    const cacheTtl = desktopChartCacheTtlMs(
+      interval,
+      cached?.candles.some((candle) => candle.forming === true) ?? false,
+    );
     if (
       cached?.fetchedAt !== null &&
       cached?.fetchedAt !== undefined &&
@@ -1270,7 +1287,7 @@ export class DesktopRuntime {
         const history = await chart.getDomesticMinuteCandles({
           symbol,
           beforeOrAt: resolveDesktopIntradayCursor(),
-          maxPages: 14,
+          maxPages: 24,
         });
         ready =
           interval === "1m"
