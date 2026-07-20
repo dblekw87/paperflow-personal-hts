@@ -160,6 +160,13 @@ atom/molecule이 KIS raw field, MessagePort, SQLite, 주문 엔진을 직접 참
 
 종목 작업공간은 검색·순위·관심종목에서 새 workspace tab으로 연다. 독립 좌측 route는 만들지 않는다. 관심종목은 독립 route이며 순위 내부의 관심 filter도 동일 데이터를 투영한다. 설정과 진단은 하나의 route 안에서 탭으로 구분한다.
 
+전역 종목 검색은 180ms debounce와 요청 sequence를 사용한다. 뒤늦게 도착한
+이전 검색 응답은 버리고, 완성형 한글 한 글자·숫자 코드부터 최대 20개의
+KIS master 결과만 표시한다. 결과 listbox는 마우스뿐 아니라
+`ArrowUp/ArrowDown/Enter/Escape`와 `Ctrl+K`를 지원한다. renderer는 마스터
+파일이나 네트워크에 직접 접근하지 않고 검증된 preload IPC projection만
+소비한다.
+
 전역 총자산은 기준 통화, FX 기준 시각, `complete/partial/stale` valuation quality를 함께 표시한다. stale FX나 quote가 있으면 단일 정확값처럼 표현하지 않는다.
 
 종목 작업공간의 `OrderBookPanel`과 `InstrumentChartPanel`은 동일 `instrumentId`와 subscription generation을 공유하며 항상 동시에 mount·표시한다. resize는 허용하지만 hide/collapse/tab 이동은 허용하지 않는다. responsive template은 좁은 화면에서 주문·정보 패널을 아래로 이동해 두 핵심 패널의 동시 가시성을 보존한다.

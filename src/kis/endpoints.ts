@@ -24,6 +24,8 @@ export const KIS_TR = {
   domesticFluctuationRank: "FHPST01700000",
   domesticNewsHeadlines: "FHKST01011800",
   overseasNewsHeadlines: "HHPSTH60100C1",
+  domesticIndexPrice: "FHPUP02100000",
+  overseasCurrentPrice: "HHDFS00000300",
   domesticOrderBook: "H0STASP0",
   domesticTrade: "H0STCNT0",
   domesticNxtOrderBook: "H0NXASP0",
@@ -52,6 +54,10 @@ export const KIS_PATH = {
     "/uapi/domestic-stock/v1/quotations/news-title",
   overseasNewsHeadlines:
     "/uapi/overseas-price/v1/quotations/news-title",
+  domesticIndexPrice:
+    "/uapi/domestic-stock/v1/quotations/inquire-index-price",
+  overseasCurrentPrice:
+    "/uapi/overseas-price/v1/quotations/price",
 } as const;
 
 export const KIS_READ_ONLY_ALLOWLIST = {
@@ -66,6 +72,8 @@ export const KIS_READ_ONLY_ALLOWLIST = {
     "/uapi/domestic-stock/v1/ranking/fluctuation",
     "/uapi/domestic-stock/v1/quotations/news-title",
     "/uapi/overseas-price/v1/quotations/news-title",
+    "/uapi/domestic-stock/v1/quotations/inquire-index-price",
+    "/uapi/overseas-price/v1/quotations/price",
   ],
   trIds: [
     "FHKST01010100",
@@ -76,6 +84,8 @@ export const KIS_READ_ONLY_ALLOWLIST = {
     "FHPST01700000",
     "FHKST01011800",
     "HHPSTH60100C1",
+    "FHPUP02100000",
+    "HHDFS00000300",
     "H0STASP0",
     "H0STCNT0",
     "H0NXASP0",

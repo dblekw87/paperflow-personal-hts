@@ -97,6 +97,8 @@ describe("offline health and safety", () => {
         "/uapi/domestic-stock/v1/ranking/fluctuation",
         "/uapi/domestic-stock/v1/quotations/news-title",
         "/uapi/overseas-price/v1/quotations/news-title",
+        "/uapi/domestic-stock/v1/quotations/inquire-index-price",
+        "/uapi/overseas-price/v1/quotations/price",
       ],
       trIds: [
         "FHKST01010100",
@@ -107,6 +109,8 @@ describe("offline health and safety", () => {
         "FHPST01700000",
         "FHKST01011800",
         "HHPSTH60100C1",
+        "FHPUP02100000",
+        "HHDFS00000300",
         "H0STASP0",
         "H0STCNT0",
         "H0NXASP0",

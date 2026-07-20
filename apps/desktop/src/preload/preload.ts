@@ -4,8 +4,11 @@ import {
   DESKTOP_CHANNELS,
   isDesktopChartProjection,
   isDesktopInformationFeedProjection,
+  isDesktopInstrumentSearchProjection,
+  isDesktopMarketContextProjection,
   isAllowedExternalInformationUrl,
   isDesktopRankingProjection,
+  isSearchableDomesticInstrumentQuery,
   type DesktopAccountProjection,
   type DesktopBootstrapProjection,
   type DesktopChartInterval,
@@ -13,6 +16,8 @@ import {
   type DesktopChartRange,
   type DesktopMarketProjection,
   type DesktopInformationFeedProjection,
+  type DesktopInstrumentSearchProjection,
+  type DesktopMarketContextProjection,
   type DesktopPaperOrderRequest,
   type DesktopPaperOrderResult,
   type DesktopRankingProjection,
@@ -349,6 +354,38 @@ const desktopApi = Object.freeze({
       );
       if (!isDesktopRankingProjection(result)) {
         throw new Error("Invalid ranking projection.");
+      }
+      return Object.freeze(result);
+    },
+  }),
+  instruments: Object.freeze({
+    searchDomestic: async (
+      rawQuery: string,
+    ): Promise<Readonly<DesktopInstrumentSearchProjection>> => {
+      const query = rawQuery.trim();
+      if (!isSearchableDomesticInstrumentQuery(query)) {
+        throw new Error("Unsupported instrument search query.");
+      }
+      const result: unknown = await ipcRenderer.invoke(
+        DESKTOP_CHANNELS.instrumentSearch,
+        query,
+      );
+      if (!isDesktopInstrumentSearchProjection(result)) {
+        throw new Error("Invalid instrument search projection.");
+      }
+      return Object.freeze(result);
+    },
+  }),
+  marketContext: Object.freeze({
+    get: async (
+      forceRefresh = false,
+    ): Promise<Readonly<DesktopMarketContextProjection>> => {
+      const result: unknown = await ipcRenderer.invoke(
+        DESKTOP_CHANNELS.marketContextGet,
+        forceRefresh,
+      );
+      if (!isDesktopMarketContextProjection(result)) {
+        throw new Error("Invalid market-context projection.");
       }
       return Object.freeze(result);
     },

@@ -163,6 +163,93 @@ export interface DesktopRankingProjection {
   readonly statusMessage: string;
 }
 
+export interface DesktopInstrumentSearchItemProjection {
+  readonly instrumentId: string;
+  readonly symbol: string;
+  readonly standardCode: string;
+  readonly name: string;
+  readonly market: "KOSPI" | "KOSDAQ";
+}
+
+export interface DesktopInstrumentSearchProjection {
+  readonly schemaVersion: 1;
+  readonly query: string;
+  readonly state: "READY" | "ERROR";
+  readonly items: readonly DesktopInstrumentSearchItemProjection[];
+  readonly source: "KIS_MASTER" | "CACHED_KIS_MASTER";
+  readonly stale: boolean;
+  readonly fetchedAt: string | null;
+  readonly statusMessage: string;
+}
+
+export function isSearchableDomesticInstrumentQuery(
+  value: unknown,
+): value is string {
+  if (typeof value !== "string") return false;
+  const query = value.trim().normalize("NFKC");
+  if (query.length === 0 || query.length > 40) return false;
+  if (/[\u1100-\u11ff\u3130-\u318f]/u.test(query)) return false;
+  return query.length > 1 || /[\uac00-\ud7a30-9]/u.test(query);
+}
+
+export type DesktopMarketContextRepresentation =
+  | "OFFICIAL_INDEX"
+  | "ETF_PROXY"
+  | "ACTUAL_FUTURE";
+export type DesktopMarketContextAssetClass =
+  | "INDEX_SPOT"
+  | "ETF_PROXY"
+  | "INDEX_FUTURE"
+  | "COMMODITY_FUTURE";
+export type DesktopMarketContextTransport =
+  | "REST_POLLING"
+  | "WEBSOCKET"
+  | "NONE";
+export type DesktopMarketContextDataQuality =
+  | "OFFICIAL_SNAPSHOT"
+  | "PROXY_SNAPSHOT"
+  | "UNAVAILABLE";
+export type DesktopMarketContextEntitlement =
+  | "AUTHORIZED"
+  | "REQUIRED"
+  | "UNKNOWN";
+export type DesktopMarketContextFreshness =
+  | "DELAYED_OR_POLLING"
+  | "STALE"
+  | "UNAVAILABLE";
+
+export interface DesktopMarketContextItemProjection {
+  readonly id: string;
+  readonly label: string;
+  readonly instrumentId: string;
+  readonly assetClass: DesktopMarketContextAssetClass;
+  readonly representation: DesktopMarketContextRepresentation;
+  readonly canonicalVenue: "KRX" | "NASDAQ" | "NYSEARCA" | "CME";
+  readonly currency: "KRW" | "USD";
+  readonly tradable: false;
+  readonly price: string | null;
+  readonly change: string | null;
+  readonly changeRate: string | null;
+  readonly transport: DesktopMarketContextTransport;
+  readonly dataQuality: DesktopMarketContextDataQuality;
+  readonly entitlement: DesktopMarketContextEntitlement;
+  readonly freshness: DesktopMarketContextFreshness;
+  readonly session: DesktopMarketSession;
+  readonly provider: "KIS" | "UNAVAILABLE";
+  readonly occurredAt: string | null;
+  readonly receivedAt: string | null;
+  readonly proxyDisclosure: string | null;
+  readonly statusMessage: string;
+}
+
+export interface DesktopMarketContextProjection {
+  readonly schemaVersion: 1;
+  readonly state: "LOADING" | "READY" | "PARTIAL" | "ERROR";
+  readonly items: readonly DesktopMarketContextItemProjection[];
+  readonly fetchedAt: string | null;
+  readonly statusMessage: string;
+}
+
 export interface DesktopInformationItemProjection {
   readonly id: string;
   readonly provider:
@@ -260,6 +347,8 @@ export const DESKTOP_CHANNELS = Object.freeze({
   chartGetHistory: "papertrading:chart:get-history",
   chartProjection: "papertrading:chart:projection",
   rankingGet: "papertrading:ranking:get",
+  instrumentSearch: "papertrading:instrument:search",
+  marketContextGet: "papertrading:market-context:get",
   informationGet: "papertrading:information:get",
   informationOpenExternal: "papertrading:information:open-external",
   paperSubmit: "papertrading:paper:submit",
@@ -430,6 +519,165 @@ export function isDesktopRankingProjection(
       (item["cumulativeTurnover"] === null ||
         isUnsignedInteger(item["cumulativeTurnover"])),
   );
+}
+
+export function isDesktopInstrumentSearchProjection(
+  value: unknown,
+): value is DesktopInstrumentSearchProjection {
+  if (
+    !isRecord(value) ||
+    value["schemaVersion"] !== 1 ||
+    !isSearchableDomesticInstrumentQuery(value["query"]) ||
+    !["READY", "ERROR"].includes(String(value["state"])) ||
+    !Array.isArray(value["items"]) ||
+    value["items"].length > 20 ||
+    !["KIS_MASTER", "CACHED_KIS_MASTER"].includes(String(value["source"])) ||
+    typeof value["stale"] !== "boolean" ||
+    (value["fetchedAt"] !== null && !isIsoInstant(value["fetchedAt"])) ||
+    (value["state"] === "READY" && !isIsoInstant(value["fetchedAt"])) ||
+    typeof value["statusMessage"] !== "string"
+  ) {
+    return false;
+  }
+  return value["items"].every(
+    (item) =>
+      isRecord(item) &&
+      /^KRX:[0-9A-Z]{6,7}$/.test(String(item["instrumentId"])) &&
+      /^[0-9A-Z]{6,7}$/.test(String(item["symbol"])) &&
+      item["instrumentId"] === `KRX:${String(item["symbol"])}` &&
+      typeof item["standardCode"] === "string" &&
+      item["standardCode"].length > 0 &&
+      item["standardCode"].length <= 20 &&
+      typeof item["name"] === "string" &&
+      item["name"].length > 0 &&
+      item["name"].length <= 120 &&
+      ["KOSPI", "KOSDAQ"].includes(String(item["market"])),
+  );
+}
+
+const desktopMarketContextInstrumentIdPattern =
+  /^(?:KRX|NASDAQ|NYSEARCA|CME):[A-Z0-9:_-]{2,80}$/;
+const decimalValuePattern = /^[+-]?\d+(?:\.\d+)?$/;
+
+export function isDesktopMarketContextProjection(
+  value: unknown,
+): value is DesktopMarketContextProjection {
+  if (
+    !isRecord(value) ||
+    value["schemaVersion"] !== 1 ||
+    !["LOADING", "READY", "PARTIAL", "ERROR"].includes(
+      String(value["state"]),
+    ) ||
+    !Array.isArray(value["items"]) ||
+    value["items"].length > 24 ||
+    (value["fetchedAt"] !== null && !isIsoInstant(value["fetchedAt"])) ||
+    typeof value["statusMessage"] !== "string"
+  ) {
+    return false;
+  }
+  const ids = new Set<string>();
+  for (const item of value["items"]) {
+    if (!isRecord(item)) return false;
+    const id = item["id"];
+    const representation = item["representation"];
+    const price = item["price"];
+    const change = item["change"];
+    const changeRate = item["changeRate"];
+    if (
+      typeof id !== "string" ||
+      !/^[a-z0-9-]{2,80}$/.test(id) ||
+      ids.has(id) ||
+      typeof item["label"] !== "string" ||
+      typeof item["instrumentId"] !== "string" ||
+      !desktopMarketContextInstrumentIdPattern.test(item["instrumentId"]) ||
+      !["INDEX_SPOT", "ETF_PROXY", "INDEX_FUTURE", "COMMODITY_FUTURE"].includes(
+        String(item["assetClass"]),
+      ) ||
+      !["OFFICIAL_INDEX", "ETF_PROXY", "ACTUAL_FUTURE"].includes(
+        String(representation),
+      ) ||
+      !["KRX", "NASDAQ", "NYSEARCA", "CME"].includes(
+        String(item["canonicalVenue"]),
+      ) ||
+      !["KRW", "USD"].includes(String(item["currency"])) ||
+      item["tradable"] !== false ||
+      (price !== null &&
+        (typeof price !== "string" || !decimalValuePattern.test(price))) ||
+      (change !== null &&
+        (typeof change !== "string" || !decimalValuePattern.test(change))) ||
+      (changeRate !== null &&
+        (typeof changeRate !== "string" ||
+          !decimalValuePattern.test(changeRate))) ||
+      !["REST_POLLING", "WEBSOCKET", "NONE"].includes(
+        String(item["transport"]),
+      ) ||
+      !["OFFICIAL_SNAPSHOT", "PROXY_SNAPSHOT", "UNAVAILABLE"].includes(
+        String(item["dataQuality"]),
+      ) ||
+      !["AUTHORIZED", "REQUIRED", "UNKNOWN"].includes(
+        String(item["entitlement"]),
+      ) ||
+      !["DELAYED_OR_POLLING", "STALE", "UNAVAILABLE"].includes(
+        String(item["freshness"]),
+      ) ||
+      !["PRE", "REGULAR", "AFTER", "CLOSED", "UNKNOWN"].includes(
+        String(item["session"]),
+      ) ||
+      !["KIS", "UNAVAILABLE"].includes(String(item["provider"])) ||
+      item["occurredAt"] !== null ||
+      (item["receivedAt"] !== null && !isIsoInstant(item["receivedAt"])) ||
+      (item["proxyDisclosure"] !== null &&
+        typeof item["proxyDisclosure"] !== "string") ||
+      typeof item["statusMessage"] !== "string"
+    ) {
+      return false;
+    }
+    if (
+      representation === "ETF_PROXY" &&
+      (item["dataQuality"] !== "PROXY_SNAPSHOT" ||
+        typeof item["proxyDisclosure"] !== "string" ||
+        item["proxyDisclosure"].length === 0)
+    ) {
+      return false;
+    }
+    if (
+      (item["assetClass"] === "ETF_PROXY") !==
+        (representation === "ETF_PROXY") ||
+      (representation === "OFFICIAL_INDEX" &&
+        item["assetClass"] !== "INDEX_SPOT") ||
+      (representation === "ACTUAL_FUTURE" &&
+        item["assetClass"] !== "INDEX_FUTURE" &&
+        item["assetClass"] !== "COMMODITY_FUTURE")
+    ) {
+      return false;
+    }
+    if (
+      representation !== "ETF_PROXY" &&
+      item["proxyDisclosure"] !== null
+    ) {
+      return false;
+    }
+    if (
+      item["freshness"] === "UNAVAILABLE" &&
+      (price !== null ||
+        change !== null ||
+        changeRate !== null ||
+        item["receivedAt"] !== null)
+    ) {
+      return false;
+    }
+    if (
+      item["freshness"] !== "UNAVAILABLE" &&
+      (price === null ||
+        change === null ||
+        changeRate === null ||
+        item["receivedAt"] === null)
+    ) {
+      return false;
+    }
+    ids.add(id);
+  }
+  return true;
 }
 
 export function isDesktopInformationFeedProjection(

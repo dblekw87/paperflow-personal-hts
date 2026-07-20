@@ -17,6 +17,7 @@
     "probe:proxies": "tsx src/cli/ws-probe.ts --market proxy",
     "probe:chart": "tsx src/cli/chart-probe.ts",
     "probe:rankings": "tsx src/cli/ranking-probe.ts",
+    "probe:market-context": "tsx src/cli/market-context-probe.ts",
     "probe:prod-pages": "tsx src/cli/prod-pages-probe.ts",
     "desktop:typecheck": "tsc --noEmit -p tsconfig.renderer.json && tsc --noEmit -p tsconfig.electron.json",
     "desktop:build:renderer": "vite build",
@@ -32,6 +33,7 @@
   "dependencies": {
     "better-sqlite3": "^12.11.1",
     "dotenv": "^17.2.1",
+    "fflate": "^0.8.2",
     "lucide-react": "^1.25.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",

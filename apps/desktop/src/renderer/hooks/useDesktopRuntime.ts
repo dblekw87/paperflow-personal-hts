@@ -7,6 +7,8 @@ import type {
   DesktopChartRange,
   DesktopMarketProjection,
   DesktopInformationFeedProjection,
+  DesktopInstrumentSearchProjection,
+  DesktopMarketContextProjection,
   DesktopPaperOrderRequest,
   DesktopPaperOrderResult,
   DesktopRankingProjection,
@@ -22,6 +24,8 @@ export interface DesktopRuntimeState {
   readonly error: string | null;
   readonly ranking: DesktopRankingProjection | null;
   readonly informationFeed: DesktopInformationFeedProjection | null;
+  readonly marketContext: DesktopMarketContextProjection | null;
+  readonly instrumentSearch: DesktopInstrumentSearchProjection | null;
   readonly loadChartHistory: (
     interval: DesktopChartInterval,
     range: DesktopChartRange,
@@ -35,9 +39,15 @@ export interface DesktopRuntimeState {
   readonly selectInstrument: (
     symbol: string,
   ) => Promise<DesktopMarketProjection | null>;
+  readonly searchDomesticInstruments: (
+    query: string,
+  ) => Promise<DesktopInstrumentSearchProjection | null>;
   readonly loadInformationFeed: (
     forceRefresh?: boolean,
   ) => Promise<DesktopInformationFeedProjection | null>;
+  readonly loadMarketContext: (
+    forceRefresh?: boolean,
+  ) => Promise<DesktopMarketContextProjection | null>;
 }
 
 export function useDesktopRuntime(): DesktopRuntimeState {
@@ -50,10 +60,16 @@ export function useDesktopRuntime(): DesktopRuntimeState {
     useState<DesktopRankingProjection | null>(null);
   const [informationFeed, setInformationFeed] =
     useState<DesktopInformationFeedProjection | null>(null);
+  const [marketContext, setMarketContext] =
+    useState<DesktopMarketContextProjection | null>(null);
+  const [instrumentSearch, setInstrumentSearch] =
+    useState<DesktopInstrumentSearchProjection | null>(null);
   const requestedChart = useRef<string | null>(null);
   const activeInstrumentId = useRef<string | null>(null);
   const instrumentSelectionSequence = useRef(0);
   const rankingRequestSequence = useRef(0);
+  const marketContextRequestSequence = useRef(0);
+  const instrumentSearchSequence = useRef(0);
 
   useEffect(() => {
     const api = window.paperTradingDesktop;
@@ -124,6 +140,52 @@ export function useDesktopRuntime(): DesktopRuntimeState {
       unsubscribeChart();
     };
   }, []);
+
+  const loadMarketContext = useCallback(
+    async (
+      forceRefresh = false,
+    ): Promise<DesktopMarketContextProjection | null> => {
+      const api = window.paperTradingDesktop;
+      if (!api) return null;
+      const requestSequence = ++marketContextRequestSequence.current;
+      setMarketContext((current) => ({
+        schemaVersion: 1,
+        state: "LOADING",
+        items: current?.items ?? [],
+        fetchedAt: current?.fetchedAt ?? null,
+        statusMessage: "KIS 시장 지수·프록시를 갱신하는 중입니다.",
+      }));
+      try {
+        const projection = await api.marketContext.get(forceRefresh);
+        if (requestSequence !== marketContextRequestSequence.current) {
+          return null;
+        }
+        setMarketContext(projection);
+        return projection;
+      } catch {
+        if (requestSequence === marketContextRequestSequence.current) {
+          setMarketContext((current) => ({
+            schemaVersion: 1,
+            state: "ERROR",
+            items: current?.items ?? [],
+            fetchedAt: current?.fetchedAt ?? null,
+            statusMessage: "KIS 시장 현황 projection을 불러오지 못했습니다.",
+          }));
+        }
+        return null;
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!window.paperTradingDesktop) return;
+    void loadMarketContext(false);
+    const timer = window.setInterval(() => {
+      void loadMarketContext(false);
+    }, 30_000);
+    return () => window.clearInterval(timer);
+  }, [loadMarketContext]);
 
   const submitPaperOrder = useCallback(
     async (
@@ -284,6 +346,47 @@ export function useDesktopRuntime(): DesktopRuntimeState {
     [],
   );
 
+  const searchDomesticInstruments = useCallback(
+    async (
+      query: string,
+    ): Promise<DesktopInstrumentSearchProjection | null> => {
+      const api = window.paperTradingDesktop;
+      const normalizedQuery = query.trim();
+      const requestSequence = ++instrumentSearchSequence.current;
+      if (!api || normalizedQuery.length === 0) {
+        setInstrumentSearch(null);
+        return null;
+      }
+      try {
+        const projection =
+          await api.instruments.searchDomestic(normalizedQuery);
+        if (
+          requestSequence !== instrumentSearchSequence.current ||
+          projection.query !== normalizedQuery
+        ) {
+          return null;
+        }
+        setInstrumentSearch(projection);
+        return projection;
+      } catch {
+        if (requestSequence === instrumentSearchSequence.current) {
+          setInstrumentSearch({
+            schemaVersion: 1,
+            query: normalizedQuery,
+            state: "ERROR",
+            items: [],
+            source: "CACHED_KIS_MASTER",
+            stale: true,
+            fetchedAt: null,
+            statusMessage: "종목 검색 데이터를 불러오지 못했습니다.",
+          });
+        }
+        return null;
+      }
+    },
+    [],
+  );
+
   return {
     market,
     account,
@@ -292,10 +395,14 @@ export function useDesktopRuntime(): DesktopRuntimeState {
     error,
     ranking,
     informationFeed,
+    marketContext,
+    instrumentSearch,
     loadChartHistory,
     loadDomesticRanking,
     selectInstrument,
+    searchDomesticInstruments,
     loadInformationFeed,
+    loadMarketContext,
     submitPaperOrder,
   };
 }

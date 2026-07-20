@@ -217,6 +217,48 @@ describe("Electron desktop runtime boundary", () => {
     }
   });
 
+  it("changes only the local account when an immediate paper buy fills", async () => {
+    const userDataPath = mkdtempSync(join(tmpdir(), "desktop-local-fill-"));
+    temporaryDirectories.push(userDataPath);
+    const runtime = createRuntime(userDataPath);
+    try {
+      const receivedAt = new Date().toISOString();
+      runtime.applyReadOnlyMarketProjection(
+        liveProjection(receivedAt, "100", "1"),
+      );
+      const before = runtime.getBootstrap().market;
+      const result = runtime.submitPaperOrder({
+        requestId: "local-market-buy-1",
+        instrumentId: "KRX:005930",
+        side: "BUY",
+        orderType: "MARKET",
+        quantity: "2",
+        limitPrice: null,
+      });
+
+      expect(result).toMatchObject({
+        accepted: true,
+        status: "FILLED",
+        account: {
+          positions: [
+            {
+              instrumentId: "KRX:005930",
+              quantity: "2",
+              averagePrice: "70100",
+            },
+          ],
+        },
+      });
+      expect(result.account.cashMinor).toBe("99859778");
+      expect(result.market.bids).toEqual(before.bids);
+      expect(result.market.asks).toEqual(before.asks);
+      expect(result.market.totalBidQuantity).toBe(before.totalBidQuantity);
+      expect(result.market.totalAskQuantity).toBe(before.totalAskQuantity);
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it("keeps the last real order book when a later projection has no book", async () => {
     const userDataPath = mkdtempSync(join(tmpdir(), "desktop-last-book-"));
     temporaryDirectories.push(userDataPath);

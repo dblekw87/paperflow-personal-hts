@@ -6,6 +6,17 @@ import { describe, expect, it } from "vitest";
 const rendererRoot = join(process.cwd(), "apps", "desktop", "src", "renderer");
 
 describe("desktop HTS UI safety invariants", () => {
+  it("guards instrument autocomplete against stale, jamo, and IME selection", () => {
+    const app = readFileSync(join(rendererRoot, "app", "App.tsx"), "utf8");
+
+    expect(app).toContain("isSearchableDomesticInstrumentQuery");
+    expect(app).toContain(
+      "desktop.instrumentSearch?.query === normalizedInstrumentQuery",
+    );
+    expect(app).toContain("event.nativeEvent.isComposing");
+    expect(app).toContain("visibleInstrumentSearchItems");
+  });
+
   it("keeps orderbook and chart mounted together in the instrument workspace", () => {
     const app = readFileSync(join(rendererRoot, "app", "App.tsx"), "utf8");
     const gridStart = app.indexOf('className="trading-grid"');

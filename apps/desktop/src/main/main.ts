@@ -14,6 +14,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import {
   DESKTOP_CHANNELS,
   isAllowedExternalInformationUrl,
+  isSearchableDomesticInstrumentQuery,
   type DesktopChartInterval,
   type DesktopChartRange,
   type DesktopRankingSort,
@@ -159,6 +160,32 @@ async function capturePortfolio(window: BrowserWindow): Promise<void> {
     window,
     ".market-chart",
     join(imageDirectory, "paperflow-chart.png"),
+  );
+
+  await window.webContents.executeJavaScript(
+    `(() => {
+      const input = document.querySelector('input[aria-label="국내 종목 검색"]');
+      if (!(input instanceof HTMLInputElement)) return;
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value"
+      )?.set;
+      setter?.call(input, "삼");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.focus();
+    })()`,
+  );
+  await waitForRendererCondition(
+    window,
+    `document.querySelectorAll(".global-search__result").length >= 3`,
+    30_000,
+  );
+  await capturePortfolioPage(
+    window,
+    join(imageDirectory, "paperflow-search.png"),
+  );
+  await window.webContents.executeJavaScript(
+    `document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))`,
   );
 
   await waitForRendererCondition(
@@ -339,6 +366,8 @@ function registerDesktopIpc(runtime: DesktopRuntimeClient): void {
     DESKTOP_CHANNELS.marketSelectInstrument,
     DESKTOP_CHANNELS.chartGetHistory,
     DESKTOP_CHANNELS.rankingGet,
+    DESKTOP_CHANNELS.instrumentSearch,
+    DESKTOP_CHANNELS.marketContextGet,
     DESKTOP_CHANNELS.informationGet,
     DESKTOP_CHANNELS.informationOpenExternal,
     DESKTOP_CHANNELS.paperSubmit,
@@ -432,6 +461,32 @@ function registerDesktopIpc(runtime: DesktopRuntimeClient): void {
         throw new Error("Unsupported ranking sort.");
       }
       return runtime.getDomesticRanking(sort as DesktopRankingSort);
+    },
+  );
+  ipcMain.handle(
+    DESKTOP_CHANNELS.instrumentSearch,
+    async (event, query: unknown) => {
+      if (!isTrustedIpcSender(event)) {
+        throw new Error("Untrusted renderer frame.");
+      }
+      if (
+        !isSearchableDomesticInstrumentQuery(query)
+      ) {
+        throw new Error("Unsupported instrument search query.");
+      }
+      return runtime.searchDomesticInstruments(query.trim());
+    },
+  );
+  ipcMain.handle(
+    DESKTOP_CHANNELS.marketContextGet,
+    async (event, forceRefresh: unknown) => {
+      if (!isTrustedIpcSender(event)) {
+        throw new Error("Untrusted renderer frame.");
+      }
+      if (typeof forceRefresh !== "boolean") {
+        throw new Error("Invalid market-context refresh request.");
+      }
+      return runtime.getMarketContext(forceRefresh);
     },
   );
   ipcMain.handle(

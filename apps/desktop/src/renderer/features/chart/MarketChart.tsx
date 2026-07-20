@@ -1,10 +1,13 @@
 import {
+  useEffect,
   useId,
   useMemo,
+  useRef,
   useState,
   type ChangeEvent,
   type KeyboardEvent,
   type PointerEvent,
+  type WheelEvent,
 } from "react";
 
 import "./MarketChart.css";
@@ -16,6 +19,13 @@ import {
   chartTimeAxisTickIndexes,
   formatChartTimeAxisLabel,
 } from "./chart-time-axis.js";
+import {
+  fullChartViewport,
+  normalizeChartViewport,
+  panChartViewport,
+  zoomChartViewport,
+  type ChartViewport,
+} from "./chart-viewport.js";
 
 export type ChartInterval =
   | "1m"
@@ -84,6 +94,7 @@ export interface MarketChartProps {
     | "PROVIDER_REPORTED"
     | "LOCAL_TRADE_AGGREGATE"
     | "UNAVAILABLE";
+  readonly historyComplete?: boolean;
   readonly onIntervalChange: (interval: ChartInterval) => void;
   readonly onRangeChange: (range: ChartRange) => void;
   readonly onIndicatorToggle: (indicatorId: string, visible: boolean) => void;
@@ -313,6 +324,7 @@ export function MarketChart({
   freshness,
   marketDataSource = "SYNTHETIC_UI_FIXTURE",
   turnoverQuality = "UNAVAILABLE",
+  historyComplete = true,
   onIntervalChange,
   onRangeChange,
   onIndicatorToggle,
@@ -323,6 +335,19 @@ export function MarketChart({
   const [draftKind, setDraftKind] = useState<IndicatorKind>("SMA");
   const [draftSource, setDraftSource] = useState<IndicatorSource>("PRICE");
   const [draftPeriod, setDraftPeriod] = useState(20);
+  const [viewport, setViewport] = useState<ChartViewport | null>(null);
+  const dragState = useRef<{
+    readonly pointerId: number;
+    readonly clientX: number;
+    readonly viewport: ChartViewport;
+  } | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+
+  useEffect(() => {
+    setViewport(null);
+    dragState.current = null;
+    setIsDragging(false);
+  }, [instrumentId, interval, range]);
 
   const sourceCandles = useMemo(
     () =>
@@ -335,13 +360,27 @@ export function MarketChart({
       ),
     [candles],
   );
+  const activeViewport = useMemo(
+    () =>
+      viewport === null
+        ? fullChartViewport(sourceCandles.length)
+        : normalizeChartViewport(viewport, sourceCandles.length),
+    [sourceCandles.length, viewport],
+  );
+  useEffect(() => {
+    setHoveredIndex(null);
+  }, [activeViewport.end, activeViewport.start]);
+  const viewportCandles = useMemo(
+    () => sourceCandles.slice(activeViewport.start, activeViewport.end),
+    [activeViewport.end, activeViewport.start, sourceCandles],
+  );
   const viewBuckets = useMemo(
     () =>
       downsampleCandlesForView(
-        sourceCandles,
+        viewportCandles,
         interval === "1m" ? MAX_RENDERED_ONE_MINUTE_CANDLES : undefined,
       ),
-    [interval, sourceCandles],
+    [interval, viewportCandles],
   );
   const usableCandles = useMemo(
     () =>
@@ -362,6 +401,20 @@ export function MarketChart({
   );
   const currentPriceValue = finiteNumber(currentPrice);
   const previousCloseValue = finiteNumber(previousClosePrice);
+  const isViewingLatest =
+    activeViewport.end === sourceCandles.length;
+  const visibleTimeRange = useMemo<ChartRange>(() => {
+    if (interval !== "1d" && interval !== "1w") return range;
+    const first = viewportCandles[0];
+    const last = viewportCandles.at(-1);
+    if (!first || !last) return range;
+    const spanDays =
+      (Date.parse(last.openedAt) - Date.parse(first.openedAt)) / 86_400_000;
+    if (!Number.isFinite(spanDays)) return range;
+    if (spanDays <= 220) return "6M";
+    if (spanDays <= 550) return "1Y";
+    return "5Y";
+  }, [interval, range, viewportCandles]);
 
   const priceScale = useMemo(() => {
     const candleValues = usableCandles.flatMap((candle) => [
@@ -370,16 +423,25 @@ export function MarketChart({
     ]);
     return scaleFor([
       ...candleValues,
-      ...(currentPriceValue === null ? [] : [currentPriceValue]),
-      ...(previousCloseValue === null ? [] : [previousCloseValue]),
+      ...(!isViewingLatest || currentPriceValue === null
+        ? []
+        : [currentPriceValue]),
+      ...(!isViewingLatest || previousCloseValue === null
+        ? []
+        : [previousCloseValue]),
     ]);
-  }, [currentPriceValue, previousCloseValue, usableCandles]);
+  }, [
+    currentPriceValue,
+    isViewingLatest,
+    previousCloseValue,
+    usableCandles,
+  ]);
   const currentPriceY =
-    currentPriceValue === null
+    currentPriceValue === null || !isViewingLatest
       ? null
       : yFor(currentPriceValue, priceScale, PRICE_TOP, PRICE_BOTTOM);
   const previousCloseY =
-    previousCloseValue === null
+    previousCloseValue === null || !isViewingLatest
       ? null
       : yFor(previousCloseValue, priceScale, PRICE_TOP, PRICE_BOTTOM);
   const referenceLabelsOverlap =
@@ -411,22 +473,30 @@ export function MarketChart({
     [usableCandles],
   );
 
-  const visibleIndicators = useMemo(
+  const indicatorSeries = useMemo(
     () =>
       indicators
         .map((indicator, index) => ({ indicator, index }))
         .filter(({ indicator }) => indicator.visible)
-        .map(({ indicator, index }) => {
-          const sourceValues = indicatorValues(sourceCandles, indicator);
-          return {
-            definition: indicator,
-            index,
-            values: viewBuckets.map(
-              (bucket) => sourceValues[bucket.sourceEndIndex] ?? null,
-            ),
-          };
-        }),
-    [indicators, sourceCandles, viewBuckets],
+        .map(({ indicator, index }) => ({
+          definition: indicator,
+          index,
+          sourceValues: indicatorValues(sourceCandles, indicator),
+        })),
+    [indicators, sourceCandles],
+  );
+  const visibleIndicators = useMemo(
+    () =>
+      indicatorSeries.map(({ definition, index, sourceValues }) => ({
+        definition,
+        index,
+        values: viewBuckets.map(
+          (bucket) =>
+            sourceValues[activeViewport.start + bucket.sourceEndIndex] ??
+            null,
+        ),
+      })),
+    [activeViewport.start, indicatorSeries, viewBuckets],
   );
 
   const fillsByCandle = useMemo(() => {
@@ -434,32 +504,47 @@ export function MarketChart({
     if (usableCandles.length === 0) {
       return buckets;
     }
-    const candleTimes = usableCandles.map((candle) =>
-      new Date(candle.openedAt).getTime(),
-    );
+    const bucketRanges = viewBuckets.map((bucket) => {
+      const sourceStart =
+        sourceCandles[activeViewport.start + bucket.sourceStartIndex];
+      const sourceAfterEnd =
+        sourceCandles[activeViewport.start + bucket.sourceEndIndex + 1];
+      return {
+        start: sourceStart ? Date.parse(sourceStart.openedAt) : Number.NaN,
+        end: sourceAfterEnd
+          ? Date.parse(sourceAfterEnd.openedAt)
+          : Number.POSITIVE_INFINITY,
+      };
+    });
     fillMarkers.forEach((fill) => {
       const fillTime = new Date(fill.filledAt).getTime();
       if (!Number.isFinite(fillTime) || finiteNumber(fill.price) === null) {
         return;
       }
-      let nearestIndex = 0;
-      let nearestDistance = Number.POSITIVE_INFINITY;
-      candleTimes.forEach((time, index) => {
-        const distance = Math.abs(time - fillTime);
-        if (Number.isFinite(time) && distance < nearestDistance) {
-          nearestIndex = index;
-          nearestDistance = distance;
-        }
-      });
-      const bucket = buckets.get(nearestIndex) ?? [];
+      const containingIndex = bucketRanges.findIndex(
+        (candidate) =>
+          Number.isFinite(candidate.start) &&
+          fillTime >= candidate.start &&
+          fillTime < candidate.end,
+      );
+      if (containingIndex < 0) return;
+      const bucket = buckets.get(containingIndex) ?? [];
       bucket.push(fill);
-      buckets.set(nearestIndex, bucket);
+      buckets.set(containingIndex, bucket);
     });
     return buckets;
-  }, [fillMarkers, usableCandles]);
+  }, [
+    activeViewport.start,
+    fillMarkers,
+    sourceCandles,
+    usableCandles.length,
+    viewBuckets,
+  ]);
 
   const selectedCandle =
     hoveredIndex === null ? null : (usableCandles[hoveredIndex] ?? null);
+  const selectedViewBucket =
+    hoveredIndex === null ? null : (viewBuckets[hoveredIndex] ?? null);
   const selectedFills =
     hoveredIndex === null ? [] : (fillsByCandle.get(hoveredIndex) ?? []);
   const tooltipFills = selectedFills.slice(0, 3);
@@ -471,6 +556,17 @@ export function MarketChart({
       return;
     }
     const bounds = event.currentTarget.getBoundingClientRect();
+    const drag = dragState.current;
+    if (drag !== null && drag.pointerId === event.pointerId) {
+      const visible = drag.viewport.end - drag.viewport.start;
+      const deltaPixels = event.clientX - drag.clientX;
+      const plotPixelWidth =
+        bounds.width * ((PLOT_RIGHT - PLOT_LEFT) / VIEW_WIDTH);
+      const deltaCandles = -(deltaPixels / plotPixelWidth) * visible;
+      setViewport(
+        panChartViewport(drag.viewport, sourceCandles.length, deltaCandles),
+      );
+    }
     const svgX = ((event.clientX - bounds.left) / bounds.width) * VIEW_WIDTH;
     const index = Math.max(
       0,
@@ -479,14 +575,106 @@ export function MarketChart({
     setHoveredIndex(index);
   };
 
+  const handlePointerDown = (event: PointerEvent<SVGSVGElement>) => {
+    if (
+      event.button !== 0 ||
+      !event.isPrimary ||
+      sourceCandles.length === 0
+    ) {
+      return;
+    }
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const svgX = ((event.clientX - bounds.left) / bounds.width) * VIEW_WIDTH;
+    const svgY = ((event.clientY - bounds.top) / bounds.height) * VIEW_HEIGHT;
+    if (
+      svgX < PLOT_LEFT ||
+      svgX > PLOT_RIGHT ||
+      svgY < PRICE_TOP ||
+      svgY > TURNOVER_BOTTOM
+    ) {
+      return;
+    }
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragState.current = {
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      viewport: activeViewport,
+    };
+    setIsDragging(true);
+  };
+
+  const handlePointerUp = (event: PointerEvent<SVGSVGElement>) => {
+    if (dragState.current?.pointerId !== event.pointerId) return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    dragState.current = null;
+    setIsDragging(false);
+  };
+
+  const handleWheel = (event: WheelEvent<SVGSVGElement>) => {
+    if (sourceCandles.length === 0 || event.deltaY === 0) return;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const svgX = ((event.clientX - bounds.left) / bounds.width) * VIEW_WIDTH;
+    const svgY = ((event.clientY - bounds.top) / bounds.height) * VIEW_HEIGHT;
+    if (
+      svgX < PLOT_LEFT ||
+      svgX > PLOT_RIGHT ||
+      svgY < PRICE_TOP ||
+      svgY > TURNOVER_BOTTOM
+    ) {
+      return;
+    }
+    event.preventDefault();
+    const anchorRatio = Math.max(
+      0,
+      Math.min(1, (svgX - PLOT_LEFT) / (PLOT_RIGHT - PLOT_LEFT)),
+    );
+    setViewport((current) =>
+      zoomChartViewport(
+        current === null
+          ? fullChartViewport(sourceCandles.length)
+          : normalizeChartViewport(current, sourceCandles.length),
+        sourceCandles.length,
+        anchorRatio,
+        event.deltaY < 0 ? "IN" : "OUT",
+      ),
+    );
+  };
+
   const handleChartKeyDown = (event: KeyboardEvent<SVGSVGElement>) => {
     if (usableCandles.length === 0) {
       return;
     }
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
+      if (event.key === "+" || event.key === "=" || event.key === "-") {
+        event.preventDefault();
+        setViewport((current) =>
+          zoomChartViewport(
+            current === null
+              ? fullChartViewport(sourceCandles.length)
+              : normalizeChartViewport(current, sourceCandles.length),
+            sourceCandles.length,
+            0.5,
+            event.key === "-" ? "OUT" : "IN",
+          ),
+        );
+      }
       return;
     }
     event.preventDefault();
+    if (event.shiftKey) {
+      const visible = activeViewport.end - activeViewport.start;
+      setViewport(
+        panChartViewport(
+          activeViewport,
+          sourceCandles.length,
+          (event.key === "ArrowLeft" ? -1 : 1) *
+            Math.max(1, Math.round(visible * 0.1)),
+        ),
+      );
+      return;
+    }
     const direction = event.key === "ArrowLeft" ? -1 : 1;
     const current = hoveredIndex ?? usableCandles.length - 1;
     setHoveredIndex(
@@ -658,11 +846,28 @@ export function MarketChart({
       >
         <span>시장 데이터 · {marketDataSource}</span>
         <span>체결 마커 · LOCAL_PAPER_FILL</span>
-        {sourceCandles.length > usableCandles.length ? (
+        {viewportCandles.length > usableCandles.length ? (
           <span>
-            장기뷰 · 원본 {sourceCandles.length.toLocaleString("ko-KR")}봉 /
-            표시 {usableCandles.length.toLocaleString("ko-KR")} 버킷
+            시각 집계 · 보이는 원본{" "}
+            {viewportCandles.length.toLocaleString("ko-KR")}봉 / 표시{" "}
+            {usableCandles.length.toLocaleString("ko-KR")} 버킷
           </span>
+        ) : null}
+        {sourceCandles.length > 0 ? (
+          <span>
+            로드 {sourceCandles.length.toLocaleString("ko-KR")}봉 · 표시{" "}
+            {activeViewport.start + 1}–
+            {activeViewport.end.toLocaleString("ko-KR")}
+          </span>
+        ) : null}
+        <span>
+          과거 경계 · {historyComplete ? "요청 범위 조회 완료" : "부분 조회"}
+        </span>
+        <span>휠 확대·축소 · 드래그 과거 이동</span>
+        {viewport !== null ? (
+          <button type="button" onClick={() => setViewport(null)}>
+            전체 보기
+          </button>
         ) : null}
       </div>
 
@@ -673,12 +878,23 @@ export function MarketChart({
       ) : (
         <svg
           className="market-chart__canvas"
+          data-dragging={isDragging ? "true" : "false"}
           viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
           role="img"
           aria-label={`${instrumentName} ${interval} OHLC 차트. 원본 ${sourceCandles.length}봉 중 ${usableCandles.length}개 시각 버킷, 거래량${turnoverQuality === "UNAVAILABLE" ? "" : "·거래대금"} 봉 패널, 로컬 모의 체결 마커 포함`}
           tabIndex={0}
+          onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
-          onPointerLeave={() => setHoveredIndex(null)}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerUp}
+          onLostPointerCapture={() => {
+            dragState.current = null;
+            setIsDragging(false);
+          }}
+          onPointerLeave={() => {
+            if (!isDragging) setHoveredIndex(null);
+          }}
+          onWheel={handleWheel}
           onKeyDown={handleChartKeyDown}
         >
           <defs>
@@ -841,7 +1057,7 @@ export function MarketChart({
                     {formatChartTimeAxisLabel(
                       candle.openedAt,
                       interval,
-                      range,
+                      visibleTimeRange,
                     )}
                   </text>
                 </g>
@@ -1053,6 +1269,11 @@ export function MarketChart({
                 <rect width={218} height={tooltipHeight} />
                 <text x={10} y={18}>
                   {formatTimestamp(selectedCandle.openedAt)}
+                  {selectedViewBucket !== null &&
+                  selectedViewBucket.sourceEndIndex >
+                    selectedViewBucket.sourceStartIndex
+                    ? ` · ${selectedViewBucket.sourceEndIndex - selectedViewBucket.sourceStartIndex + 1}봉 집계`
+                    : ""}
                 </text>
                 <text x={10} y={38}>
                   O {selectedCandle.open} · H {selectedCandle.high}

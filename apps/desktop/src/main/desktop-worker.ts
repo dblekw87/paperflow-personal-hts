@@ -4,6 +4,8 @@ import type {
   DesktopChartProjection,
   DesktopMarketProjection,
   DesktopInformationFeedProjection,
+  DesktopInstrumentSearchProjection,
+  DesktopMarketContextProjection,
   DesktopPaperOrderRequest,
   DesktopPaperOrderResult,
   DesktopRankingProjection,
@@ -32,7 +34,17 @@ type WorkerCommand =
     }
   | {
       readonly id: string;
+      readonly kind: "instrument-search";
+      readonly query: unknown;
+    }
+  | {
+      readonly id: string;
       readonly kind: "information-get";
+      readonly forceRefresh: unknown;
+    }
+  | {
+      readonly id: string;
+      readonly kind: "market-context-get";
       readonly forceRefresh: unknown;
     }
   | {
@@ -47,6 +59,8 @@ type WorkerResult =
   | DesktopChartProjection
   | DesktopMarketProjection
   | DesktopInformationFeedProjection
+  | DesktopInstrumentSearchProjection
+  | DesktopMarketContextProjection
   | DesktopPaperOrderResult
   | DesktopRankingProjection
   | null;
@@ -64,7 +78,9 @@ function isWorkerCommand(value: unknown): value is WorkerCommand {
       "market-select-instrument",
       "chart-history",
       "ranking-get",
+      "instrument-search",
       "information-get",
+      "market-context-get",
       "paper-submit",
       "close",
     ].includes(record["kind"])
@@ -120,10 +136,16 @@ process.on("message", (value: unknown) => {
       case "ranking-get":
         result = await runtime.getDomesticRanking(value.sort);
         break;
+      case "instrument-search":
+        result = await runtime.searchDomesticInstruments(value.query);
+        break;
       case "information-get":
         result = await runtime.getInformationFeed(
           value.forceRefresh === true,
         );
+        break;
+      case "market-context-get":
+        result = await runtime.getMarketContext(value.forceRefresh === true);
         break;
       case "paper-submit":
         result = runtime.submitPaperOrder(

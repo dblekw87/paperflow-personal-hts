@@ -6,6 +6,8 @@ import type {
   DesktopChartRange,
   DesktopMarketProjection,
   DesktopInformationFeedProjection,
+  DesktopInstrumentSearchProjection,
+  DesktopMarketContextProjection,
   DesktopPaperOrderRequest,
   DesktopPaperOrderResult,
   DesktopRankingProjection,
@@ -61,6 +63,16 @@ declare global {
       readonly getDomestic: (
         sort: DesktopRankingSort,
       ) => Promise<Readonly<DesktopRankingProjection>>;
+    };
+    readonly instruments: {
+      readonly searchDomestic: (
+        query: string,
+      ) => Promise<Readonly<DesktopInstrumentSearchProjection>>;
+    };
+    readonly marketContext: {
+      readonly get: (
+        forceRefresh?: boolean,
+      ) => Promise<Readonly<DesktopMarketContextProjection>>;
     };
     readonly information: {
       readonly getFeed: (

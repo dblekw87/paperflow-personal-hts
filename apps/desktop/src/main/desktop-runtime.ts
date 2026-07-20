@@ -35,7 +35,17 @@ import {
   KisDomesticFluctuationClient,
   type DomesticFluctuationItem,
 } from "../../../../src/kis/domestic-fluctuation.js";
+import {
+  isSearchableDomesticInstrumentQuery,
+  KisDomesticInstrumentMaster,
+} from "../../../../src/kis/domestic-instrument-master.js";
 import { KisProdNewsClient } from "../../../../src/kis/news-headlines.js";
+import {
+  KIS_DOMESTIC_INDEX_SELECTIONS,
+  KIS_US_MARKET_PROXY_SELECTIONS,
+  KisMarketContextClient,
+  type KisMarketContextSnapshot,
+} from "../../../../src/kis/market-context.js";
 import {
   SecEdgarClient,
   findSecIssuerMappings,
@@ -71,11 +81,15 @@ import type {
   DesktopMarketProjection,
   DesktopMarketSession,
   DesktopInformationFeedProjection,
+  DesktopInstrumentSearchProjection,
+  DesktopMarketContextItemProjection,
+  DesktopMarketContextProjection,
   DesktopPaperOrderRequest,
   DesktopPaperOrderResult,
   DesktopRankingProjection,
   DesktopRankingSort,
 } from "../shared/desktop-contracts.js";
+import { averagePaperPositionPrice } from "../shared/paper-valuation.js";
 
 const ACCOUNT_ID = "personal-paper-account";
 const DEFAULT_INITIAL_CASH_MINOR = "100000000";
@@ -90,6 +104,8 @@ const DAILY_CHART_CACHE_TTL_MS = 6 * 60 * 60 * 1_000;
 // pagination at one request per second so a 4h/5Y backfill does not burst.
 const CHART_REQUEST_MINIMUM_GAP_MS = 1_000;
 const INFORMATION_CACHE_TTL_MS = 30_000;
+const MARKET_CONTEXT_CACHE_TTL_MS = 15_000;
+const MARKET_CONTEXT_REQUEST_GAP_MS = 120;
 
 export function desktopChartCacheTtlMs(
   interval: DesktopChartInterval,
@@ -635,11 +651,247 @@ function validatePaperRequest(value: unknown): DesktopPaperOrderRequest {
   return request as DesktopPaperOrderRequest;
 }
 
+const MARKET_CONTEXT_DESCRIPTORS = [
+  {
+    id: "kospi",
+    label: "KOSPI",
+    instrumentId: "KRX:KOSPI",
+    assetClass: "INDEX_SPOT",
+    representation: "OFFICIAL_INDEX",
+    canonicalVenue: "KRX",
+    currency: "KRW",
+    proxyDisclosure: null,
+  },
+  {
+    id: "kosdaq",
+    label: "KOSDAQ",
+    instrumentId: "KRX:KOSDAQ",
+    assetClass: "INDEX_SPOT",
+    representation: "OFFICIAL_INDEX",
+    canonicalVenue: "KRX",
+    currency: "KRW",
+    proxyDisclosure: null,
+  },
+  {
+    id: "kospi200",
+    label: "KOSPI 200",
+    instrumentId: "KRX:KOSPI200",
+    assetClass: "INDEX_SPOT",
+    representation: "OFFICIAL_INDEX",
+    canonicalVenue: "KRX",
+    currency: "KRW",
+    proxyDisclosure: null,
+  },
+  {
+    id: "nasdaq-proxy",
+    label: "NASDAQ 방향",
+    instrumentId: "NASDAQ:QQQ",
+    assetClass: "ETF_PROXY",
+    representation: "ETF_PROXY",
+    canonicalVenue: "NASDAQ",
+    currency: "USD",
+    proxyDisclosure: "QQQ ETF 스냅샷 · Nasdaq 지수나 NQ/MNQ 선물이 아님",
+  },
+  {
+    id: "sp500-proxy",
+    label: "S&P 500 방향",
+    instrumentId: "NYSEARCA:SPY",
+    assetClass: "ETF_PROXY",
+    representation: "ETF_PROXY",
+    canonicalVenue: "NYSEARCA",
+    currency: "USD",
+    proxyDisclosure: "SPY ETF 스냅샷 · S&P 500 지수나 ES/MES 선물이 아님",
+  },
+  {
+    id: "russell-proxy",
+    label: "Russell 방향",
+    instrumentId: "NYSEARCA:IWM",
+    assetClass: "ETF_PROXY",
+    representation: "ETF_PROXY",
+    canonicalVenue: "NYSEARCA",
+    currency: "USD",
+    proxyDisclosure: "IWM ETF 스냅샷 · RUT/RTY/M2K가 아님",
+  },
+  {
+    id: "oil-proxy",
+    label: "WTI 방향",
+    instrumentId: "NYSEARCA:USO",
+    assetClass: "ETF_PROXY",
+    representation: "ETF_PROXY",
+    canonicalVenue: "NYSEARCA",
+    currency: "USD",
+    proxyDisclosure: "USO ETF 스냅샷 · WTI 현물이나 CL/MCL 선물이 아님",
+  },
+  {
+    id: "gold-proxy",
+    label: "금 방향",
+    instrumentId: "NYSEARCA:GLD",
+    assetClass: "ETF_PROXY",
+    representation: "ETF_PROXY",
+    canonicalVenue: "NYSEARCA",
+    currency: "USD",
+    proxyDisclosure: "GLD ETF 스냅샷 · 금 현물이나 GC/MGC 선물이 아님",
+  },
+] as const;
+
+const UNAVAILABLE_FUTURE_DESCRIPTORS = [
+  {
+    id: "kospi200-day-future",
+    label: "KOSPI200 주간 선물",
+    instrumentId: "KRX:FUTURE:KOSPI200:DAY",
+    assetClass: "INDEX_FUTURE",
+    canonicalVenue: "KRX",
+    currency: "KRW",
+    entitlement: "UNKNOWN",
+    statusMessage: "실제 월물 resolver와 KIS 파생 WebSocket 연결 준비 중",
+  },
+  {
+    id: "kospi200-night-future",
+    label: "KOSPI200 야간 선물",
+    instrumentId: "KRX:FUTURE:KOSPI200:NIGHT",
+    assetClass: "INDEX_FUTURE",
+    canonicalVenue: "KRX",
+    currency: "KRW",
+    entitlement: "UNKNOWN",
+    statusMessage: "야간 세션 권한과 실제 월물 연결 준비 중",
+  },
+  {
+    id: "kosdaq150-future",
+    label: "KOSDAQ150 선물",
+    instrumentId: "KRX:FUTURE:KOSDAQ150",
+    assetClass: "INDEX_FUTURE",
+    canonicalVenue: "KRX",
+    currency: "KRW",
+    entitlement: "UNKNOWN",
+    statusMessage: "KOSDAQ150 실제 월물 어댑터 준비 중",
+  },
+  {
+    id: "nasdaq-future",
+    label: "NASDAQ 선물 NQ/MNQ",
+    instrumentId: "CME:FUTURE:NQ-MNQ",
+    assetClass: "INDEX_FUTURE",
+    canonicalVenue: "CME",
+    currency: "USD",
+    entitlement: "REQUIRED",
+    statusMessage: "CME 실시간 시세 권한과 실제 월물 연결 필요",
+  },
+  {
+    id: "sp500-future",
+    label: "S&P 500 선물 ES/MES",
+    instrumentId: "CME:FUTURE:ES-MES",
+    assetClass: "INDEX_FUTURE",
+    canonicalVenue: "CME",
+    currency: "USD",
+    entitlement: "REQUIRED",
+    statusMessage: "CME 실시간 시세 권한과 실제 월물 연결 필요",
+  },
+  {
+    id: "oil-future",
+    label: "WTI 선물 CL/MCL",
+    instrumentId: "CME:FUTURE:CL-MCL",
+    assetClass: "COMMODITY_FUTURE",
+    canonicalVenue: "CME",
+    currency: "USD",
+    entitlement: "REQUIRED",
+    statusMessage: "NYMEX 실시간 시세 권한과 실제 월물 연결 필요",
+  },
+  {
+    id: "gold-future",
+    label: "금 선물 GC/MGC",
+    instrumentId: "CME:FUTURE:GC-MGC",
+    assetClass: "COMMODITY_FUTURE",
+    canonicalVenue: "CME",
+    currency: "USD",
+    entitlement: "REQUIRED",
+    statusMessage: "COMEX 실시간 시세 권한과 실제 월물 연결 필요",
+  },
+] as const;
+
+function unavailableMarketContextItems(): DesktopMarketContextItemProjection[] {
+  return UNAVAILABLE_FUTURE_DESCRIPTORS.map((descriptor) => ({
+    ...descriptor,
+    representation: "ACTUAL_FUTURE",
+    tradable: false,
+    price: null,
+    change: null,
+    changeRate: null,
+    transport: "NONE",
+    dataQuality: "UNAVAILABLE",
+    freshness: "UNAVAILABLE",
+    session: "UNKNOWN",
+    provider: "UNAVAILABLE",
+    occurredAt: null,
+    receivedAt: null,
+    proxyDisclosure: null,
+  }));
+}
+
+function marketContextItemFromSnapshot(
+  snapshot: KisMarketContextSnapshot,
+): DesktopMarketContextItemProjection {
+  const descriptor = MARKET_CONTEXT_DESCRIPTORS.find(
+    (item) => item.instrumentId === snapshot.instrumentId,
+  );
+  if (!descriptor) {
+    throw new Error("Unexpected KIS market-context instrument");
+  }
+  const isProxy = descriptor.representation === "ETF_PROXY";
+  return {
+    ...descriptor,
+    tradable: false,
+    price: snapshot.price,
+    change: snapshot.change,
+    changeRate: snapshot.changeRate,
+    transport: "REST_POLLING",
+    dataQuality: isProxy ? "PROXY_SNAPSHOT" : "OFFICIAL_SNAPSHOT",
+    entitlement: "AUTHORIZED",
+    freshness: "DELAYED_OR_POLLING",
+    session: "UNKNOWN",
+    provider: "KIS",
+    occurredAt: null,
+    receivedAt: snapshot.receivedAt,
+    statusMessage: isProxy
+      ? "KIS 미국 ETF REST 스냅샷"
+      : "KIS 국내 지수 REST 스냅샷",
+  };
+}
+
+function failedMarketContextItem(
+  descriptor: (typeof MARKET_CONTEXT_DESCRIPTORS)[number],
+): DesktopMarketContextItemProjection {
+  return {
+    ...descriptor,
+    tradable: false,
+    price: null,
+    change: null,
+    changeRate: null,
+    transport: "REST_POLLING",
+    dataQuality:
+      descriptor.representation === "ETF_PROXY"
+        ? "PROXY_SNAPSHOT"
+        : "OFFICIAL_SNAPSHOT",
+    entitlement: "UNKNOWN",
+    freshness: "UNAVAILABLE",
+    session: "UNKNOWN",
+    provider: "KIS",
+    occurredAt: null,
+    receivedAt: null,
+    statusMessage: "KIS 스냅샷을 받지 못했습니다.",
+  };
+}
+
+function waitForMarketContextQuota(): Promise<void> {
+  return new Promise((resolve) =>
+    setTimeout(resolve, MARKET_CONTEXT_REQUEST_GAP_MS),
+  );
+}
+
 export class DesktopRuntime {
   readonly #database: Database.Database;
   readonly #accounts: LocalSimulationRepository;
   readonly #papers: LocalPaperTradingRepository;
   readonly #information: LocalInformationRepository;
+  readonly #instrumentMaster: KisDomesticInstrumentMaster;
   readonly #emitMarket: (projection: DesktopMarketProjection) => void;
   readonly #emitAccount: (projection: DesktopAccountProjection) => void;
   readonly #emitChart: (projection: DesktopChartProjection) => void;
@@ -664,6 +916,10 @@ export class DesktopRuntime {
   #informationCache:
     | { readonly projection: DesktopInformationFeedProjection; readonly at: number }
     | null = null;
+  #marketContextRequest: Promise<DesktopMarketContextProjection> | null = null;
+  #marketContextCache:
+    | { readonly projection: DesktopMarketContextProjection; readonly at: number }
+    | null = null;
   #stream: DomesticKisLiveStream | null = null;
   #marketConnectionGeneration = 0;
   #marketSequence = 0n;
@@ -684,6 +940,9 @@ export class DesktopRuntime {
     this.#accounts = new LocalSimulationRepository(this.#database);
     this.#papers = new LocalPaperTradingRepository(this.#database);
     this.#information = new LocalInformationRepository(this.#database);
+    this.#instrumentMaster = new KisDomesticInstrumentMaster({
+      userDataPath: options.userDataPath,
+    });
     this.#emitMarket = options.emitMarket;
     this.#emitAccount = options.emitAccount ?? (() => undefined);
     this.#emitChart = options.emitChart ?? (() => undefined);
@@ -815,6 +1074,150 @@ export class DesktopRuntime {
             : "KIS 거래 순위를 불러오지 못했습니다.",
       };
     }
+  }
+
+  public async searchDomesticInstruments(
+    rawQuery: unknown,
+  ): Promise<DesktopInstrumentSearchProjection> {
+    if (
+      typeof rawQuery !== "string" ||
+      !isSearchableDomesticInstrumentQuery(rawQuery)
+    ) {
+      throw new TypeError("Expected a domestic instrument search query");
+    }
+    const query = rawQuery.trim();
+    try {
+      const result = await this.#instrumentMaster.search(query, 20);
+      return {
+        schemaVersion: 1,
+        query,
+        state: "READY",
+        items: result.items,
+        source: result.source,
+        stale: result.stale,
+        fetchedAt: result.fetchedAt,
+        statusMessage:
+          result.items.length === 0
+            ? `"${query}"에 일치하는 KOSPI·KOSDAQ 종목이 없습니다.`
+            : `${result.items.length}개 종목 · ${
+                result.stale ? "마지막 KIS 종목 마스터" : "KIS 종목 마스터"
+              }`,
+      };
+    } catch {
+      return {
+        schemaVersion: 1,
+        query,
+        state: "ERROR",
+        items: [],
+        source: "CACHED_KIS_MASTER",
+        stale: true,
+        fetchedAt: null,
+        statusMessage:
+          "KIS 종목 마스터를 내려받지 못했습니다. 네트워크 연결을 확인해주세요.",
+      };
+    }
+  }
+
+  public getMarketContext(
+    forceRefresh = false,
+  ): Promise<DesktopMarketContextProjection> {
+    if (
+      !forceRefresh &&
+      this.#marketContextCache !== null &&
+      Date.now() - this.#marketContextCache.at < MARKET_CONTEXT_CACHE_TTL_MS
+    ) {
+      return Promise.resolve(this.#marketContextCache.projection);
+    }
+    if (this.#marketContextRequest !== null) {
+      return this.#marketContextRequest;
+    }
+    const request = this.#loadMarketContext().finally(() => {
+      if (this.#marketContextRequest === request) {
+        this.#marketContextRequest = null;
+      }
+    });
+    this.#marketContextRequest = request;
+    return request;
+  }
+
+  async #loadMarketContext(): Promise<DesktopMarketContextProjection> {
+    const config = loadRuntimeConfig();
+    const snapshots = new Map<string, KisMarketContextSnapshot>();
+    const failed = new Set<string>();
+    try {
+      assertLiveReadOnlyAcknowledgement(config);
+      const environment = readOnlyMarketDataEnvironment(config);
+      const credentials = requireKisCredentialsForEnvironment(
+        config,
+        environment,
+      );
+      const auth = this.#authClient(environment, credentials);
+      const client = new KisMarketContextClient({
+        environment,
+        credentials,
+        getAccessToken: () => auth.getAccessToken(),
+      });
+
+      const requests: Array<() => Promise<KisMarketContextSnapshot>> = [
+        ...KIS_DOMESTIC_INDEX_SELECTIONS.map(
+          (selection) => () => client.getDomesticIndex(selection),
+        ),
+        ...KIS_US_MARKET_PROXY_SELECTIONS.map(
+          (selection) => () => client.getUsMarketProxy(selection),
+        ),
+      ];
+      const instrumentIds = [
+        ...KIS_DOMESTIC_INDEX_SELECTIONS.map(
+          (selection) => selection.instrumentId,
+        ),
+        ...KIS_US_MARKET_PROXY_SELECTIONS.map(
+          (selection) => selection.instrumentId,
+        ),
+      ];
+      for (let index = 0; index < requests.length; index += 1) {
+        if (index > 0) await waitForMarketContextQuota();
+        try {
+          const snapshot = await requests[index]!();
+          snapshots.set(snapshot.instrumentId, snapshot);
+        } catch {
+          failed.add(instrumentIds[index]!);
+        }
+      }
+    } catch {
+      for (const descriptor of MARKET_CONTEXT_DESCRIPTORS) {
+        failed.add(descriptor.instrumentId);
+      }
+    }
+
+    const actualItems = MARKET_CONTEXT_DESCRIPTORS.map((descriptor) => {
+      const snapshot = snapshots.get(descriptor.instrumentId);
+      return snapshot
+        ? marketContextItemFromSnapshot(snapshot)
+        : failedMarketContextItem(descriptor);
+    });
+    const successfulCount = actualItems.filter(
+      (item) => item.freshness !== "UNAVAILABLE",
+    ).length;
+    const fetchedAt = new Date().toISOString();
+    const projection: DesktopMarketContextProjection = {
+      schemaVersion: 1,
+      state:
+        successfulCount === actualItems.length
+          ? "PARTIAL"
+          : successfulCount > 0
+            ? "PARTIAL"
+            : "ERROR",
+      items: [...actualItems, ...unavailableMarketContextItems()],
+      fetchedAt,
+      statusMessage:
+        successfulCount === actualItems.length
+          ? "KIS 지수·ETF 스냅샷 준비 · 실제 선물은 권한/월물 연결 전"
+          : successfulCount > 0
+            ? `KIS 시장 스냅샷 ${successfulCount}/${actualItems.length}개 준비 · 일부 공급자 응답 없음`
+            : "KIS 시장 스냅샷을 받지 못했습니다. 키·승인·네트워크를 확인하세요.",
+    };
+    this.#marketContextCache = { projection, at: Date.now() };
+    return projection;
   }
 
   public getInformationFeed(
@@ -1744,7 +2147,13 @@ export class DesktopRuntime {
       positions: summary.positions.map((position) => ({
         instrumentId: position.instrumentId,
         quantity: position.quantity,
-        averagePrice: null,
+        averagePrice: averagePaperPositionPrice(
+          this.#papers.listPaperFillMarkers(
+            ACCOUNT_ID,
+            position.instrumentId,
+          ),
+          position.quantity,
+        ),
       })),
       fills: fills.map((fill) => {
         const cumulative =

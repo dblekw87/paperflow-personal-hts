@@ -5,6 +5,8 @@ import { randomUUID } from "node:crypto";
 import {
   isDesktopChartProjection,
   isDesktopInformationFeedProjection,
+  isDesktopInstrumentSearchProjection,
+  isDesktopMarketContextProjection,
   isDesktopRankingProjection,
   type DesktopAccountProjection,
   type DesktopBootstrapProjection,
@@ -13,6 +15,8 @@ import {
   type DesktopChartRange,
   type DesktopMarketProjection,
   type DesktopInformationFeedProjection,
+  type DesktopInstrumentSearchProjection,
+  type DesktopMarketContextProjection,
   type DesktopPaperOrderResult,
   type DesktopRankingProjection,
   type DesktopRankingSort,
@@ -228,6 +232,24 @@ export class DesktopRuntimeClient {
     return projection;
   }
 
+  public async searchDomesticInstruments(
+    query: string,
+  ): Promise<DesktopInstrumentSearchProjection> {
+    const projection = await this.#request<unknown>(
+      {
+        kind: "instrument-search",
+        query,
+      },
+      30_000,
+    );
+    if (!isDesktopInstrumentSearchProjection(projection)) {
+      throw new Error(
+        "Desktop worker returned an invalid instrument search projection",
+      );
+    }
+    return projection;
+  }
+
   public async getInformationFeed(
     forceRefresh = false,
   ): Promise<DesktopInformationFeedProjection> {
@@ -241,6 +263,24 @@ export class DesktopRuntimeClient {
     if (!isDesktopInformationFeedProjection(projection)) {
       throw new Error(
         "Desktop worker returned an invalid information projection",
+      );
+    }
+    return projection;
+  }
+
+  public async getMarketContext(
+    forceRefresh = false,
+  ): Promise<DesktopMarketContextProjection> {
+    const projection = await this.#request<unknown>(
+      {
+        kind: "market-context-get",
+        forceRefresh,
+      },
+      30_000,
+    );
+    if (!isDesktopMarketContextProjection(projection)) {
+      throw new Error(
+        "Desktop worker returned an invalid market-context projection",
       );
     }
     return projection;

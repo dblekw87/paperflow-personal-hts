@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart3,
   Bell,
@@ -19,6 +19,7 @@ import {
 
 import {
   InstrumentHeader,
+  MarketContextStrip,
   MarketSidebar,
   NewsPanel,
   OrderBookPanel,
@@ -41,7 +42,12 @@ import {
   buildLiveInformationInsights,
   buildLiveThemeLeaders,
 } from "../model/live-dashboard-insights.js";
-import type { DesktopRankingSort } from "../../shared/desktop-contracts.js";
+import type {
+  DesktopInstrumentSearchItemProjection,
+  DesktopRankingSort,
+} from "../../shared/desktop-contracts.js";
+import { isSearchableDomesticInstrumentQuery } from "../../shared/desktop-contracts.js";
+import { valuePaperPosition } from "../../shared/paper-valuation.js";
 
 type ThemePreference = "system" | "dark" | "light";
 type WorkspacePage =
@@ -450,6 +456,12 @@ export function App() {
     readonly symbol: string;
     readonly name: string;
   } | null>(null);
+  const [instrumentQuery, setInstrumentQuery] = useState("");
+  const [instrumentSearchOpen, setInstrumentSearchOpen] = useState(false);
+  const [instrumentSearchLoading, setInstrumentSearchLoading] = useState(false);
+  const [instrumentSearchIndex, setInstrumentSearchIndex] = useState(0);
+  const instrumentSearchRoot = useRef<HTMLDivElement | null>(null);
+  const instrumentSearchInput = useRef<HTMLInputElement | null>(null);
   const [analysisNote, setAnalysisNote] = useState(
     () => localStorage.getItem("papertrading:analysis-note") ?? "",
   );
@@ -479,6 +491,64 @@ export function App() {
     query.addEventListener("change", update);
     return () => query.removeEventListener("change", update);
   }, []);
+
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      if (
+        (event.ctrlKey || event.metaKey) &&
+        event.key.toLocaleLowerCase("en-US") === "k"
+      ) {
+        event.preventDefault();
+        instrumentSearchInput.current?.focus();
+        setInstrumentSearchOpen(true);
+      }
+      if (event.key === "Escape") {
+        setInstrumentSearchOpen(false);
+        instrumentSearchInput.current?.blur();
+      }
+    };
+    const dismissSearch = (event: PointerEvent) => {
+      if (
+        event.target instanceof Node &&
+        !instrumentSearchRoot.current?.contains(event.target)
+      ) {
+        setInstrumentSearchOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleShortcut);
+    window.addEventListener("pointerdown", dismissSearch);
+    return () => {
+      window.removeEventListener("keydown", handleShortcut);
+      window.removeEventListener("pointerdown", dismissSearch);
+    };
+  }, []);
+
+  useEffect(() => {
+    const query = instrumentQuery.trim();
+    setInstrumentSearchIndex(0);
+    if (
+      !hasDesktopRuntime ||
+      !isSearchableDomesticInstrumentQuery(query)
+    ) {
+      setInstrumentSearchLoading(false);
+      return;
+    }
+    setInstrumentSearchLoading(true);
+    let active = true;
+    const timer = window.setTimeout(() => {
+      void desktop.searchDomesticInstruments(query).finally(() => {
+        if (active) setInstrumentSearchLoading(false);
+      });
+    }, 180);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [
+    desktop.searchDomesticInstruments,
+    hasDesktopRuntime,
+    instrumentQuery,
+  ]);
 
   useEffect(() => {
     if (!desktop.account) return;
@@ -746,6 +816,33 @@ export function App() {
   const activePosition = desktop.account?.positions.find(
     (position) => position.instrumentId === activeInstrumentId,
   );
+  const activePositionValuation = useMemo(() => {
+    try {
+      return valuePaperPosition({
+        quantity: activePosition?.quantity ?? "0",
+        averagePrice: activePosition?.averagePrice ?? null,
+        marketPrice: desktop.market?.price ?? null,
+      });
+    } catch {
+      return null;
+    }
+  }, [
+    activePosition?.averagePrice,
+    activePosition?.quantity,
+    desktop.market?.price,
+  ]);
+  const unrealizedPnl = activePositionValuation?.unrealizedPnlMinor ?? null;
+  const unrealizedDirection =
+    unrealizedPnl === null
+      ? "flat"
+      : marketDirection(unrealizedPnl);
+  const formattedUnrealizedPnl =
+    unrealizedPnl === null
+      ? "평가 대기"
+      : `${unrealizedPnl.startsWith("-") ? "-" : unrealizedPnl === "0" ? "" : "+"}₩${formatWholeNumber(
+          unrealizedPnl.replace(/^-/, ""),
+          unrealizedPnl,
+        )}`;
   const liveThemeProjection = useMemo(
     () => buildLiveThemeLeaders(desktop.ranking),
     [desktop.ranking],
@@ -787,6 +884,24 @@ export function App() {
     desktop.chart.range === chartRange
       ? desktop.chart.statusMessage
       : "KIS 차트 응답 대기 중";
+  const normalizedInstrumentQuery = instrumentQuery.trim();
+  const visibleInstrumentSearchItems =
+    isSearchableDomesticInstrumentQuery(normalizedInstrumentQuery) &&
+    desktop.instrumentSearch?.query === normalizedInstrumentQuery
+      ? desktop.instrumentSearch.items
+      : [];
+
+  const openSearchedInstrument = (
+    item: DesktopInstrumentSearchItemProjection,
+  ) => {
+    setSelectedInstrument({ symbol: item.symbol, name: item.name });
+    setWorkspacePage("DASHBOARD");
+    setInstrumentQuery("");
+    setInstrumentSearchOpen(false);
+    setNotice(`${item.name}(${item.symbol}) 종목 화면을 여는 중입니다.`);
+    instrumentSearchInput.current?.blur();
+    void desktop.selectInstrument(item.symbol);
+  };
 
   const numericQuantity = parseWholeNumberInput(draft.quantity);
 
@@ -896,19 +1011,109 @@ export function App() {
           <ChevronDown size={14} aria-hidden="true" />
         </label>
 
-        <label className="global-search">
+        <div
+          className="global-search"
+          ref={instrumentSearchRoot}
+          data-open={instrumentSearchOpen && instrumentQuery.trim().length > 0}
+        >
           <Search size={16} aria-hidden="true" />
-          <span className="sr-only">종목 검색</span>
           <input
-            placeholder={
-              hasDesktopRuntime
-                ? "종목 검색 · 연결 준비 중"
-                : "종목명 · 코드 · 테마 검색"
+            ref={instrumentSearchInput}
+            type="search"
+            value={instrumentQuery}
+            placeholder="종목명 · 종목코드 검색"
+            aria-label="국내 종목 검색"
+            aria-autocomplete="list"
+            aria-controls="domestic-instrument-search-results"
+            aria-expanded={
+              instrumentSearchOpen && instrumentQuery.trim().length > 0
             }
-            disabled={hasDesktopRuntime}
+            autoComplete="off"
+            disabled={!hasDesktopRuntime}
+            onFocus={() => setInstrumentSearchOpen(true)}
+            onChange={(event) => {
+              setInstrumentQuery(event.target.value.slice(0, 40));
+              setInstrumentSearchOpen(true);
+            }}
+            onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing) return;
+              const items = visibleInstrumentSearchItems;
+              if (event.key === "ArrowDown") {
+                event.preventDefault();
+                setInstrumentSearchIndex((current) =>
+                  items.length === 0 ? 0 : (current + 1) % items.length,
+                );
+              } else if (event.key === "ArrowUp") {
+                event.preventDefault();
+                setInstrumentSearchIndex((current) =>
+                  items.length === 0
+                    ? 0
+                    : (current - 1 + items.length) % items.length,
+                );
+              } else if (event.key === "Enter") {
+                const item = items[instrumentSearchIndex];
+                if (item) {
+                  event.preventDefault();
+                  openSearchedInstrument(item);
+                }
+              }
+            }}
           />
           <kbd>Ctrl K</kbd>
-        </label>
+          {instrumentSearchOpen && instrumentQuery.trim().length > 0 ? (
+            <div
+              className="global-search__results"
+              id="domestic-instrument-search-results"
+              role="listbox"
+              aria-label="국내 종목 검색 결과"
+            >
+              <div className="global-search__status">
+                {!isSearchableDomesticInstrumentQuery(instrumentQuery)
+                  ? "완성형 한글 1자 또는 종목코드를 입력하세요."
+                  : instrumentSearchLoading
+                  ? "KIS 종목 마스터 검색 중…"
+                  : (desktop.instrumentSearch?.statusMessage ??
+                    "검색어를 확인하고 있습니다.")}
+              </div>
+              {!instrumentSearchLoading &&
+              isSearchableDomesticInstrumentQuery(instrumentQuery)
+                ? visibleInstrumentSearchItems.map(
+                    (item, index) => (
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={index === instrumentSearchIndex}
+                        className={
+                          index === instrumentSearchIndex
+                            ? "global-search__result global-search__result--active"
+                            : "global-search__result"
+                        }
+                        key={item.instrumentId}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onMouseEnter={() => setInstrumentSearchIndex(index)}
+                        onClick={() => openSearchedInstrument(item)}
+                      >
+                        <span>
+                          <strong>{item.name}</strong>
+                          <small>{item.symbol}</small>
+                        </span>
+                        <em>{item.market}</em>
+                      </button>
+                    ),
+                  )
+                : null}
+              {!instrumentSearchLoading &&
+              isSearchableDomesticInstrumentQuery(instrumentQuery) &&
+              desktop.instrumentSearch?.state === "READY" &&
+              desktop.instrumentSearch.query === normalizedInstrumentQuery &&
+              visibleInstrumentSearchItems.length === 0 ? (
+                <p className="global-search__empty">
+                  일치하는 KOSPI·KOSDAQ 종목이 없습니다.
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
 
         <div className="connection-summary">
           <span
@@ -1091,6 +1296,13 @@ export function App() {
           </div>
         </div>
 
+        <MarketContextStrip
+          projection={desktop.marketContext}
+          onRefresh={() => {
+            void desktop.loadMarketContext(true);
+          }}
+        />
+
         <div hidden={workspacePage !== "DASHBOARD"}>
         <InstrumentHeader
           name={activeInstrumentName}
@@ -1159,7 +1371,16 @@ export function App() {
 
         <PortfolioStrip
           accountName="나의 모의 계좌"
-          valuationQuality={hasDesktopRuntime ? "partial" : "complete"}
+          valuationQuality={
+            !hasDesktopRuntime
+              ? "complete"
+              : desktop.market?.freshness === "stale"
+                ? "stale"
+                : (desktop.account?.positions.length ?? 0) === 0 ||
+                    unrealizedPnl !== null
+                  ? "complete"
+                  : "partial"
+          }
           values={[
             {
               label: "가용 현금",
@@ -1169,10 +1390,19 @@ export function App() {
               )}`,
             },
             {
-              label: "오늘 손익",
-              value: hasDesktopRuntime ? "계산 미연결" : "+₩847,500",
-              subValue: hasDesktopRuntime ? "실시간 평가 엔진 준비 중" : "+0.83%",
-              direction: hasDesktopRuntime ? "flat" : "positive",
+              label: "평가 손익",
+              value: hasDesktopRuntime
+                ? formattedUnrealizedPnl
+                : "+₩847,500",
+              subValue: hasDesktopRuntime
+                ? activePositionValuation?.unrealizedReturnRate !== null &&
+                  activePositionValuation?.unrealizedReturnRate !== undefined
+                  ? `${activePositionValuation.unrealizedReturnRate.startsWith("-") ? "" : "+"}${activePositionValuation.unrealizedReturnRate}% · 청산비용 전`
+                  : "보유 종목 없음"
+                : "+0.83%",
+              direction: hasDesktopRuntime
+                ? unrealizedDirection
+                : "positive",
             },
             {
               label: "저장 상태",
@@ -1289,6 +1519,9 @@ export function App() {
             turnoverQuality={
               desktop.chart?.turnoverQuality ??
               (hasDesktopRuntime ? "UNAVAILABLE" : "LOCAL_TRADE_AGGREGATE")
+            }
+            historyComplete={
+              desktop.chart?.paginationComplete ?? !hasDesktopRuntime
             }
             onIntervalChange={handleChartIntervalChange}
             onRangeChange={setChartRange}

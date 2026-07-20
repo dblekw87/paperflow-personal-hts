@@ -1,5 +1,6 @@
 export * from "./InstrumentHeader";
 export * from "./MarketSidebar";
+export * from "./MarketContextStrip";
 export * from "./NewsPanel";
 export * from "./OrderBookPanel";
 export * from "./OrderTicket";

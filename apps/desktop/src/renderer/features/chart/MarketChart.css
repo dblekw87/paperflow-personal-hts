@@ -225,6 +225,17 @@
 
 .market-chart__source-legend {
   flex-wrap: wrap;
+  justify-content: flex-start;
+  font-size: var(--font-size-xs);
+}
+
+.market-chart__source-legend button {
+  margin-left: auto;
+  padding: 3px 8px;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
   font-size: var(--font-size-xs);
 }
 
@@ -236,7 +247,13 @@
   overflow: visible;
   background: var(--chart-bg);
   border-radius: var(--radius-sm);
+  cursor: grab;
   touch-action: none;
+  user-select: none;
+}
+
+.market-chart__canvas[data-dragging="true"] {
+  cursor: grabbing;
 }
 
 .market-chart__empty {

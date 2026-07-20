@@ -57,6 +57,7 @@ export function formatChartTimeAxisLabel(
           : {
               timeZone: "Asia/Seoul",
               year: "numeric",
+              month: "2-digit",
             };
   return new Intl.DateTimeFormat("ko-KR", options).format(date);
 }
