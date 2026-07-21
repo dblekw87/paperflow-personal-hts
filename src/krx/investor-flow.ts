@@ -37,10 +37,36 @@ export const KrxInvestorByStockSchema = z.object({
 
 export type KrxInvestorByStock = z.infer<typeof KrxInvestorByStockSchema>;
 
+export const KrxMarketInvestorFlowSchema = z.object({
+  market: z.enum(["KOSPI", "KOSDAQ", "ALL"]),
+  source: z.literal("KRX_DATA_PRODUCT"),
+  fetchedAt: z.string().datetime(),
+  providerTimestamp: z.null(),
+  quality: z.literal("PROVIDER_REPORTED_SNAPSHOT_FINALITY_UNKNOWN"),
+  rows: z.array(
+    z.object({
+      businessDate: calendarDateSchema,
+      individual: investorFlowSchema,
+      foreign: investorFlowSchema,
+      institution: investorFlowSchema,
+    }),
+  ),
+});
+
+export type KrxMarketInvestorFlow = z.infer<
+  typeof KrxMarketInvestorFlowSchema
+>;
+
 export interface KrxInvestorByStockRequest {
   readonly symbol: string;
   readonly isin: string;
   readonly name: string;
+  readonly fromDate: string;
+  readonly toDate: string;
+}
+
+export interface KrxMarketInvestorFlowRequest {
+  readonly market: "KOSPI" | "KOSDAQ" | "ALL";
   readonly fromDate: string;
   readonly toDate: string;
 }
@@ -142,7 +168,10 @@ function findParticipantRow(
   );
 }
 
-function flowFromRow(row: ParsedCsvRow) {
+function flowFromRow(
+  row: ParsedCsvRow,
+  scale: { readonly quantity: bigint; readonly amount: bigint },
+) {
   if (row.length < 7) {
     throw new KrxStatDownloadError({
       code: "KRX_INVESTOR_FLOW_SCHEMA_MISMATCH",
@@ -151,16 +180,19 @@ function flowFromRow(row: ParsedCsvRow) {
     });
   }
   return investorFlowSchema.parse({
-    sellQuantity: parseScaledInteger(row[1] ?? "", 1_000n, false),
-    buyQuantity: parseScaledInteger(row[2] ?? "", 1_000n, false),
-    netBuyQuantity: parseScaledInteger(row[3] ?? "", 1_000n, true),
-    sellAmount: parseScaledInteger(row[4] ?? "", 1_000_000n, false),
-    buyAmount: parseScaledInteger(row[5] ?? "", 1_000_000n, false),
-    netBuyAmount: parseScaledInteger(row[6] ?? "", 1_000_000n, true),
+    sellQuantity: parseScaledInteger(row[1] ?? "", scale.quantity, false),
+    buyQuantity: parseScaledInteger(row[2] ?? "", scale.quantity, false),
+    netBuyQuantity: parseScaledInteger(row[3] ?? "", scale.quantity, true),
+    sellAmount: parseScaledInteger(row[4] ?? "", scale.amount, false),
+    buyAmount: parseScaledInteger(row[5] ?? "", scale.amount, false),
+    netBuyAmount: parseScaledInteger(row[6] ?? "", scale.amount, true),
   });
 }
 
-function investorRowsFromCsv(csv: string): {
+function investorRowsFromCsv(
+  csv: string,
+  scale: { readonly quantity: bigint; readonly amount: bigint },
+): {
   readonly individual: z.infer<typeof investorFlowSchema>;
   readonly foreign: z.infer<typeof investorFlowSchema>;
   readonly institution: z.infer<typeof investorFlowSchema>;
@@ -177,9 +209,9 @@ function investorRowsFromCsv(csv: string): {
     });
   }
   return {
-    individual: flowFromRow(individual),
-    foreign: flowFromRow(foreign),
-    institution: flowFromRow(institution),
+    individual: flowFromRow(individual, scale),
+    foreign: flowFromRow(foreign, scale),
+    institution: flowFromRow(institution, scale),
   };
 }
 
@@ -204,6 +236,31 @@ function requestParams(request: KrxInvestorByStockRequest): URLSearchParams {
   });
 }
 
+function marketCode(market: KrxMarketInvestorFlowRequest["market"]): string {
+  if (market === "KOSPI") return "STK";
+  if (market === "KOSDAQ") return "KSQ";
+  return "ALL";
+}
+
+function marketRequestParams(
+  request: KrxMarketInvestorFlowRequest,
+): URLSearchParams {
+  return new URLSearchParams({
+    locale: "ko_KR",
+    inqTpCd: "1",
+    trdVolVal: "2",
+    askBid: "3",
+    mktId: marketCode(request.market),
+    strtDd: request.fromDate,
+    endDd: request.toDate,
+    share: "2",
+    money: "3",
+    csvxls_isNo: "false",
+    name: "fileDown",
+    url: "dbms/MDC/STAT/standard/MDCSTAT02201",
+  });
+}
+
 export class KrxInvestorFlowClient {
   readonly #client: KrxStatDownloadClient;
   readonly #clock: () => Date;
@@ -221,12 +278,46 @@ export class KrxInvestorFlowClient {
   ): Promise<KrxInvestorByStock> {
     assertRequest(request);
     const csv = await this.#client.downloadCsvByParams(requestParams(request));
-    const parsedRows = investorRowsFromCsv(csv);
+    const parsedRows = investorRowsFromCsv(csv, {
+      quantity: 1_000n,
+      amount: 1_000_000n,
+    });
     return KrxInvestorByStockSchema.parse({
       instrumentId: `KRX:${request.symbol}`,
       source: "KRX_DATA_PRODUCT",
       fetchedAt: this.#clock().toISOString(),
       quality: "PROVIDER_REPORTED_AFTER_CLOSE",
+      rows: [
+        {
+          businessDate: request.toDate,
+          ...parsedRows,
+        },
+      ],
+    });
+  }
+
+  async getMarketInvestorFlow(
+    request: KrxMarketInvestorFlowRequest,
+  ): Promise<KrxMarketInvestorFlow> {
+    if (
+      !calendarDateSchema.safeParse(request.fromDate).success ||
+      !calendarDateSchema.safeParse(request.toDate).success
+    ) {
+      throw new TypeError("KRX market investor-flow dates must be YYYYMMDD");
+    }
+    const csv = await this.#client.downloadCsvByParams(
+      marketRequestParams(request),
+    );
+    const parsedRows = investorRowsFromCsv(csv, {
+      quantity: 1n,
+      amount: 1_000_000n,
+    });
+    return KrxMarketInvestorFlowSchema.parse({
+      market: request.market,
+      source: "KRX_DATA_PRODUCT",
+      fetchedAt: this.#clock().toISOString(),
+      providerTimestamp: null,
+      quality: "PROVIDER_REPORTED_SNAPSHOT_FINALITY_UNKNOWN",
       rows: [
         {
           businessDate: request.toDate,

@@ -243,7 +243,7 @@ export interface DesktopInstrumentInvestorFlowProjection {
 }
 
 export interface DesktopMarketInvestorFlowProjection {
-  readonly market: "KOSPI" | "KOSDAQ";
+  readonly market: "ALL" | "KOSPI" | "KOSDAQ";
   readonly currency: "KRW";
   readonly providerTimestamp: null;
   readonly quality: "PROVIDER_REPORTED_SNAPSHOT_FINALITY_UNKNOWN";
@@ -842,7 +842,7 @@ export function isDesktopInvestorFlowProjection(
     if (!isRecord(market)) return false;
     const marketId = market["market"];
     if (
-      !["KOSPI", "KOSDAQ"].includes(String(marketId)) ||
+      !["ALL", "KOSPI", "KOSDAQ"].includes(String(marketId)) ||
       seenMarkets.has(String(marketId)) ||
       market["currency"] !== "KRW" ||
       market["providerTimestamp"] !== null ||
@@ -871,7 +871,7 @@ export function isDesktopInvestorFlowProjection(
     (!isRecord(instrument) ||
       instrument["investorSummary"] === null ||
       instrument["programSummary"] === null ||
-      seenMarkets.size !== 2)
+    seenMarkets.size === 0)
   ) {
     return false;
   }

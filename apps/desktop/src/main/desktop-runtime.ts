@@ -1395,14 +1395,42 @@ export class DesktopRuntime {
     ) {
       try {
         const toDate = previousKoreanBusinessDate();
-        const stock = (await new KrxInvestorFlowClient().getInvestorByStock({
-          symbol,
-          isin: master.standardCode,
-          name: master.name,
-          fromDate: koreanDateOffset(toDate, -7),
-          toDate,
-        })).rows[0] ?? null;
+        const client = new KrxInvestorFlowClient();
+        const [stockResult, marketResult] = await Promise.allSettled([
+          client.getInvestorByStock({
+            symbol,
+            isin: master.standardCode,
+            name: master.name,
+            fromDate: koreanDateOffset(toDate, -7),
+            toDate,
+          }),
+          client.getMarketInvestorFlow({
+            market: "ALL",
+            fromDate: koreanDateOffset(toDate, -7),
+            toDate,
+          }),
+        ]);
+        const stock = stockResult.status === "fulfilled"
+          ? stockResult.value.rows[0] ?? null
+          : null;
+        const market = marketResult.status === "fulfilled"
+          ? marketResult.value.rows[0] ?? null
+          : null;
         if (stock !== null) {
+          const markets = market === null ? [] : [
+            {
+              market: "ALL" as const,
+              currency: "KRW" as const,
+              providerTimestamp: null,
+              quality: "PROVIDER_REPORTED_SNAPSHOT_FINALITY_UNKNOWN" as const,
+              participants: [
+                flowValue("INDIVIDUAL", market.individual),
+                flowValue("FOREIGN", market.foreign),
+                flowValue("INSTITUTION", market.institution),
+              ],
+              statusMessage: "KRX 통계 CSV 전체 시장 투자자 수급 수신",
+            },
+          ];
           return {
             schemaVersion: 1,
             state: "PARTIAL",
@@ -1425,10 +1453,12 @@ export class DesktopRuntime {
               programSummary: null,
               statusMessage: "KRX 통계 CSV 종목별 투자자 수급 수신",
             },
-            markets: [],
+            markets,
             fetchedAt: stock.businessDate ? fetchedAt : null,
             statusMessage:
-              "KRX 통계 CSV 종목별 투자자 수급 수신 · 전체 시장 수급과 프로그램매매는 전용 CSV payload 확인 후 연결됩니다.",
+              market === null
+                ? "KRX 통계 CSV 종목별 투자자 수급 수신 · 전체 시장 수급은 미수신, 프로그램매매는 전용 CSV payload 확인 후 연결됩니다."
+                : "KRX 통계 CSV 종목별·전체 시장 투자자 수급 수신 · 프로그램매매는 전용 CSV payload 확인 후 연결됩니다.",
           };
         }
       } catch (error) {

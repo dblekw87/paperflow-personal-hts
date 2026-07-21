@@ -117,4 +117,75 @@ describe("KrxInvestorFlowClient", () => {
       code: "KRX_INVESTOR_FLOW_MISSING_PARTICIPANT",
     });
   });
+
+  it("normalizes MDCSTAT02201 market investor CSV using whole-share and KRW units", async () => {
+    const result = await client(csv).getMarketInvestorFlow({
+      market: "ALL",
+      fromDate: "20260714",
+      toDate: "20260721",
+    });
+
+    expect(result).toMatchObject({
+      market: "ALL",
+      source: "KRX_DATA_PRODUCT",
+      fetchedAt: NOW.toISOString(),
+      quality: "PROVIDER_REPORTED_SNAPSHOT_FINALITY_UNKNOWN",
+      rows: [
+        {
+          businessDate: "20260721",
+          individual: {
+            sellQuantity: "2946843",
+            buyQuantity: "2948680",
+            netBuyQuantity: "1837",
+            sellAmount: "65461704000000",
+            buyAmount: "61897378000000",
+            netBuyAmount: "-3564326000000",
+          },
+          foreign: {
+            netBuyQuantity: "-35525",
+            netBuyAmount: "2028386000000",
+          },
+          institution: {
+            netBuyQuantity: "12393",
+            netBuyAmount: "1444811000000",
+          },
+        },
+      ],
+    });
+  });
+
+  it("sends the confirmed KRX MDCSTAT02201 market request parameters", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(async (_input: unknown, init?: RequestInit) => {
+        const body = new URLSearchParams(String(init?.body));
+        expect(body.get("locale")).toBe("ko_KR");
+        expect(body.get("inqTpCd")).toBe("1");
+        expect(body.get("trdVolVal")).toBe("2");
+        expect(body.get("askBid")).toBe("3");
+        expect(body.get("mktId")).toBe("ALL");
+        expect(body.get("strtDd")).toBe("20260714");
+        expect(body.get("endDd")).toBe("20260721");
+        expect(body.get("share")).toBe("2");
+        expect(body.get("money")).toBe("3");
+        expect(body.get("url")).toBe("dbms/MDC/STAT/standard/MDCSTAT02201");
+        return new Response("otp-code");
+      })
+      .mockResolvedValueOnce(
+        new Response(csv, {
+          headers: { "content-type": "text/csv; charset=UTF-8" },
+        }),
+      );
+
+    await new KrxInvestorFlowClient({
+      clock: () => NOW,
+      client: new KrxStatDownloadClient({
+        fetch: fetchMock as unknown as typeof fetch,
+      }),
+    }).getMarketInvestorFlow({
+      market: "ALL",
+      fromDate: "20260714",
+      toDate: "20260721",
+    });
+  });
 });

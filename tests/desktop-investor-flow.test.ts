@@ -76,6 +76,24 @@ describe("desktop investor-flow projection", () => {
     ).toBe(true);
   });
 
+  it("accepts KRX all-market investor-flow projections", () => {
+    const projection = validProjection();
+    expect(
+      isDesktopInvestorFlowProjection({
+        ...projection,
+        state: "PARTIAL",
+        source: "KRX_DATA_PRODUCT",
+        markets: [
+          {
+            ...projection.markets[0],
+            market: "ALL",
+            statusMessage: "KRX 전체 시장 수급",
+          },
+        ],
+      }),
+    ).toBe(true);
+  });
+
   it("rejects a program row inside a market projection", () => {
     const projection = validProjection();
     const unsafe = {
@@ -152,6 +170,7 @@ describe("InvestorFlowPanel safety", () => {
     expect(component).toContain("거래소 원천 수급을 우선");
     expect(component).toContain("KIS fallback");
     expect(component).toContain("KRX OpenAPI");
+    expect(component).toContain('"ALL"');
     expect(component).toContain("없는 값을 0으로 채우지 않습니다");
     expect(component).not.toContain(">미수신<");
     expect(component).not.toMatch(/SYNTHETIC_UI_FIXTURE|FIXTURE UI|mockInvestor/i);

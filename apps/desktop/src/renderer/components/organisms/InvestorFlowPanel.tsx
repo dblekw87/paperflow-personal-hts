@@ -16,7 +16,7 @@ export interface InvestorFlowPanelProps {
 }
 
 type FlowView = "INSTRUMENT" | "MARKET";
-type FlowMarket = "KOSPI" | "KOSDAQ";
+type FlowMarket = "ALL" | "KOSPI" | "KOSDAQ";
 
 const instrumentParticipants = [
   "INDIVIDUAL",
@@ -209,7 +209,7 @@ export function InvestorFlowPanel({
       : scope === "INSTRUMENT"
         ? "INSTRUMENT"
         : selectedView;
-  const [market, setMarket] = useState<FlowMarket>("KOSPI");
+  const [market, setMarket] = useState<FlowMarket>("ALL");
   const instrument = projection?.instrument ?? null;
   const marketProjection: DesktopMarketInvestorFlowProjection | null =
     projection?.markets.find((item) => item.market === market) ?? null;
@@ -303,7 +303,7 @@ export function InvestorFlowPanel({
           className="pt-investor-flow__content"
         >
           <div className="pt-investor-flow__market-tabs" role="tablist" aria-label="시장 선택">
-            {(["KOSPI", "KOSDAQ"] as const).map((tab) => (
+            {(["ALL", "KOSPI", "KOSDAQ"] as const).map((tab) => (
               <button
                 key={tab}
                 type="button"
@@ -312,15 +312,15 @@ export function InvestorFlowPanel({
                 tabIndex={market === tab ? 0 : -1}
                 onClick={() => setMarket(tab)}
                 onKeyDown={(event) =>
-                  selectNextTab(event, ["KOSPI", "KOSDAQ"], market, setMarket)
+                  selectNextTab(event, ["ALL", "KOSPI", "KOSDAQ"], market, setMarket)
                 }
               >
-                {tab}
+                {tab === "ALL" ? "전체" : tab}
               </button>
             ))}
           </div>
           <div className="pt-investor-flow__context">
-            <strong>{market}</strong>
+            <strong>{market === "ALL" ? "전체 시장" : market}</strong>
             <span>
               {marketProjection
                 ? "공급자 snapshot · 기준시각/최종성 미제공"
@@ -330,11 +330,11 @@ export function InvestorFlowPanel({
           <FlowTable
             participants={marketParticipants}
             values={marketProjection?.participants ?? []}
-            label={`${market} 시장별 투자자 수급`}
+            label={`${market === "ALL" ? "전체 시장" : market} 시장별 투자자 수급`}
             emptyMessage={
               projection?.state === "ERROR" || projection?.state === "UNAVAILABLE"
                 ? statusText(projection)
-                : `${market} 시장별 투자자 수급 데이터가 아직 수신되지 않았습니다.`
+                : `${market === "ALL" ? "전체 시장" : market} 시장별 투자자 수급 데이터가 아직 수신되지 않았습니다.`
             }
           />
         </div>
