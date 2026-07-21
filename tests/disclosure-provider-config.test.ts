@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   hasOpenDartCredentials,
+  hasKrxOpenApiCredentials,
   hasSecRequestIdentity,
   loadRuntimeConfig,
   redactDisclosureSecrets,
+  requireKrxOpenApiCredentials,
   requireOpenDartCredentials,
   requireSecRequestIdentity,
   type RuntimeConfig,
@@ -30,6 +32,21 @@ describe("disclosure provider configuration", () => {
     expect(requireOpenDartCredentials(config)).toEqual({
       crtfcKey: "a".repeat(40),
     });
+  });
+
+  it("accepts KRX Data Marketplace Open API keys without exposing the value", () => {
+    const key = "A".repeat(40);
+    const config = configWith({ KRX_OPENAPI_KEY: key });
+    expect(hasKrxOpenApiCredentials(config)).toBe(true);
+    expect(requireKrxOpenApiCredentials(config)).toEqual({ authKey: key });
+  });
+
+  it("rejects missing KRX Open API keys before provider requests", () => {
+    const config = configWith({ KRX_OPENAPI_KEY: "" });
+    expect(hasKrxOpenApiCredentials(config)).toBe(false);
+    expect(() => requireKrxOpenApiCredentials(config)).toThrow(
+      "KRX_OPENAPI_PROVIDER_UNCONFIGURED",
+    );
   });
 
   it("rejects placeholder SEC identities", () => {

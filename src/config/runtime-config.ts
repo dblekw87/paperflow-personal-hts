@@ -44,6 +44,8 @@ const runtimeSchema = z.object({
   KIS_PROBE_SECONDS: z.coerce.number().int().min(3).max(120).default(15),
   KIS_LIVE_ACK: z.string().optional(),
   DART_CRTFC_KEY: z.string().trim().optional(),
+  DATA_GO_KR_SERVICE_KEY: z.string().trim().optional(),
+  KRX_OPENAPI_KEY: z.string().trim().optional(),
   SEC_USER_AGENT: z.string().trim().optional(),
   FINNHUB_API_KEY: z.string().trim().optional(),
   PAPER_FILL_PROFILE: z
@@ -64,6 +66,14 @@ export interface KisCredentials {
 
 export interface OpenDartCredentials {
   crtfcKey: string;
+}
+
+export interface PublicDataPortalCredentials {
+  serviceKey: string;
+}
+
+export interface KrxOpenApiCredentials {
+  authKey: string;
 }
 
 export interface SecRequestIdentity {
@@ -150,6 +160,16 @@ export function hasOpenDartCredentials(config: RuntimeConfig): boolean {
   );
 }
 
+export function hasPublicDataPortalCredentials(config: RuntimeConfig): boolean {
+  const key = config.DATA_GO_KR_SERVICE_KEY?.trim() ?? "";
+  return key.length >= 20 && !/^(?:your-|change-me|sample)/i.test(key);
+}
+
+export function hasKrxOpenApiCredentials(config: RuntimeConfig): boolean {
+  const key = config.KRX_OPENAPI_KEY?.trim() ?? "";
+  return key.length >= 20 && !/^(?:your-|change-me|sample)/i.test(key);
+}
+
 export function hasSecRequestIdentity(config: RuntimeConfig): boolean {
   const value = config.SEC_USER_AGENT?.trim() ?? "";
   const email = value.match(
@@ -170,6 +190,24 @@ export function requireOpenDartCredentials(
     throw new Error("DART_PROVIDER_UNCONFIGURED");
   }
   return { crtfcKey: config.DART_CRTFC_KEY! };
+}
+
+export function requirePublicDataPortalCredentials(
+  config: RuntimeConfig,
+): PublicDataPortalCredentials {
+  if (!hasPublicDataPortalCredentials(config)) {
+    throw new Error("PUBLIC_DATA_PORTAL_PROVIDER_UNCONFIGURED");
+  }
+  return { serviceKey: config.DATA_GO_KR_SERVICE_KEY! };
+}
+
+export function requireKrxOpenApiCredentials(
+  config: RuntimeConfig,
+): KrxOpenApiCredentials {
+  if (!hasKrxOpenApiCredentials(config)) {
+    throw new Error("KRX_OPENAPI_PROVIDER_UNCONFIGURED");
+  }
+  return { authKey: config.KRX_OPENAPI_KEY! };
 }
 
 export function requireSecRequestIdentity(
@@ -217,6 +255,8 @@ export function publicConfig(config: RuntimeConfig) {
     paperFillProfile: config.PAPER_FILL_PROFILE,
     paperQueueSafetyFactor: config.PAPER_QUEUE_SAFETY_FACTOR,
     hasOpenDartKey: hasOpenDartCredentials(config),
+    hasPublicDataPortalKey: hasPublicDataPortalCredentials(config),
+    hasKrxOpenApiKey: hasKrxOpenApiCredentials(config),
     hasSecUserAgent: hasSecRequestIdentity(config),
     hasFinnhubApiKey: Boolean(config.FINNHUB_API_KEY?.trim()),
   };

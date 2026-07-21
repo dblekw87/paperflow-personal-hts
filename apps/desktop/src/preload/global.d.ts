@@ -8,6 +8,7 @@ import type {
   DesktopInformationFeedProjection,
   DesktopInstrumentSearchProjection,
   DesktopMarketContextProjection,
+  DesktopMarketCalendarProjection,
   DesktopPaperOrderRequest,
   DesktopPaperOrderResult,
   DesktopRankingProjection,
@@ -84,6 +85,11 @@ declare global {
       readonly get: (
         forceRefresh?: boolean,
       ) => Promise<Readonly<DesktopMarketContextProjection>>;
+    };
+    readonly marketCalendar: {
+      readonly get: (
+        forceRefresh?: boolean,
+      ) => Promise<Readonly<DesktopMarketCalendarProjection>>;
     };
     readonly information: {
       readonly getFeed: (

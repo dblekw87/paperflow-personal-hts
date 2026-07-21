@@ -4,6 +4,7 @@ import {
   Bell,
   BookOpenText,
   BriefcaseBusiness,
+  CalendarDays,
   CandlestickChart,
   ChevronDown,
   CircleDollarSign,
@@ -69,6 +70,7 @@ import {
 } from "../../shared/desktop-contracts.js";
 import { valuePaperPosition } from "../../shared/paper-valuation.js";
 import { truncateUsPrice } from "../model/price-display.js";
+import type { MarketCalendarEvent } from "../../../../../src/contracts/market-calendar.js";
 
 type ThemePreference = "system" | "dark" | "light";
 type WatchlistQuoteSnapshot = {
@@ -83,6 +85,7 @@ type WorkspacePage =
   | "RANKINGS"
   | "PORTFOLIO"
   | "ORDERS"
+  | "CALENDAR"
   | "NEWS"
   | "NOTES"
   | "SECURITY"
@@ -93,6 +96,7 @@ const WORKSPACE_PAGE_LABELS: Readonly<Record<WorkspacePage, string>> = {
   RANKINGS: "종목 순위",
   PORTFOLIO: "포트폴리오",
   ORDERS: "주문·체결",
+  CALENDAR: "이벤트 캘린더",
   NEWS: "뉴스·공시",
   NOTES: "분석 노트",
   SECURITY: "보안 상태",
@@ -107,6 +111,131 @@ const INTRADAY_CHART_INTERVALS: readonly ChartInterval[] = [
   "60m",
   "4h",
 ];
+const EMPTY_MARKET_CALENDAR_EVENTS: readonly MarketCalendarEvent[] = [];
+
+type CalendarMarketFilter = "ALL" | "KR" | "US" | "GLOBAL";
+type CalendarCategoryFilter =
+  | "ALL"
+  | "CORPORATE"
+  | "MACRO"
+  | "DERIVATIVES"
+  | "REBALANCE";
+type CalendarQualityFilter = "ALL" | MarketCalendarEvent["dataQuality"];
+type CalendarSourceState = "READY" | "UNCONFIGURED" | "UNSUPPORTED" | "ERROR";
+
+const CALENDAR_MARKET_LABELS: Readonly<Record<CalendarMarketFilter, string>> = {
+  ALL: "전 시장",
+  KR: "국내",
+  US: "미국",
+  GLOBAL: "글로벌",
+};
+
+const CALENDAR_CATEGORY_LABELS: Readonly<
+  Record<CalendarCategoryFilter, string>
+> = {
+  ALL: "모든 유형",
+  CORPORATE: "기업",
+  MACRO: "거시",
+  DERIVATIVES: "파생",
+  REBALANCE: "리밸런싱",
+};
+
+const CALENDAR_QUALITY_LABELS: Readonly<Record<CalendarQualityFilter, string>> = {
+  ALL: "모든 품질",
+  OFFICIAL: "공식",
+  REGULATOR_EXCHANGE: "거래소·규제",
+  ISSUER_PRIMARY: "기업 1차",
+  LICENSED: "라이선스",
+  AGGREGATED: "집계",
+  HEADLINE_ONLY: "제목만",
+  DELAYED: "지연",
+  STALE: "Stale",
+  UNSUPPORTED: "미지원",
+};
+
+const CALENDAR_KIND_LABELS: Readonly<Record<MarketCalendarEvent["kind"], string>> = {
+  EARNINGS: "실적",
+  EARNINGS_GUIDANCE: "가이던스",
+  DIVIDEND_DECLARATION: "배당 선언",
+  EX_DIVIDEND: "Ex-dividend",
+  DIVIDEND_RECORD_DATE: "배당 기준일",
+  DIVIDEND_PAYMENT: "배당 지급",
+  CAPITAL_INCREASE: "유상증자",
+  BONUS_ISSUE: "무상증자",
+  RIGHTS_OFFERING: "Rights",
+  STOCK_SPLIT: "액면분할",
+  REVERSE_SPLIT: "액면병합",
+  CAPITAL_REDUCTION: "감자",
+  BUYBACK: "자사주",
+  MERGER_ACQUISITION: "M&A",
+  SPIN_OFF: "분할",
+  SHARE_EXCHANGE: "주식교환",
+  TENDER_OFFER: "공개매수",
+  IPO: "IPO",
+  NEW_LISTING: "신규상장",
+  DELISTING: "상장폐지",
+  LOCKUP_RELEASE: "Lock-up",
+  SHAREHOLDER_MEETING: "주주총회",
+  INVESTOR_DAY: "Investor day",
+  CONFERENCE_PRESENTATION: "발표",
+  TRADING_HALT: "거래정지",
+  REGULATORY_ACTION: "규제",
+  CENTRAL_BANK_RATE_DECISION: "금리결정",
+  CENTRAL_BANK_MINUTES: "의사록",
+  CENTRAL_BANK_SPEECH: "중앙은행 발언",
+  FOMC: "FOMC",
+  MACRO_RELEASE: "경제지표",
+  CPI: "CPI",
+  PPI: "PPI",
+  PCE: "PCE",
+  GDP: "GDP",
+  EMPLOYMENT: "고용",
+  PMI: "PMI",
+  RETAIL_SALES: "소매판매",
+  TRADE_BALANCE: "무역수지",
+  EIA_INVENTORY: "EIA 재고",
+  TREASURY_AUCTION: "국채입찰",
+  OPTIONS_EXPIRY: "옵션만기",
+  FUTURES_EXPIRY: "선물만기",
+  INDEX_REBALANCE: "지수 리밸런싱",
+  MSCI_REBALANCE: "MSCI",
+  RUSSELL_REBALANCE: "Russell",
+  ETF_REBALANCE: "ETF 리밸런싱",
+  OTHER_CORPORATE: "기업 이벤트",
+  OTHER_MACRO: "거시 이벤트",
+  OTHER_MARKET_STRUCTURE: "시장 구조",
+};
+
+const CALENDAR_PROVIDER_LABELS: Readonly<Record<MarketCalendarEvent["provider"], string>> = {
+  OPEN_DART: "OpenDART",
+  KIND_KRX: "KIND/KRX",
+  KSD_RIGHTS_SCHEDULE: "예탁원 권리일정",
+  KIS_NEWS_HEADLINE: "KIS 뉴스",
+  SEC_EDGAR: "SEC EDGAR",
+  NASDAQ_DAILY_LIST: "Nasdaq Daily List",
+  NYSE_CORPORATE_ACTIONS: "NYSE Corporate Actions",
+  NASDAQ_TRADER: "Nasdaq Trader",
+  US_FEDERAL_RESERVE: "Federal Reserve",
+  US_BLS: "BLS",
+  US_BEA: "BEA",
+  US_EIA: "EIA",
+  US_TREASURY: "US Treasury",
+  BOK_ECOS: "BOK ECOS",
+  KOSIS: "KOSIS",
+  KOREA_MOEF: "기재부",
+  KRX_DERIVATIVES: "KRX 파생",
+  CBOE: "Cboe",
+  CME: "CME",
+  MSCI: "MSCI",
+  FTSE_RUSSELL: "FTSE Russell",
+  ETF_ISSUER: "ETF Issuer",
+  ALPHA_VANTAGE: "Alpha Vantage",
+  FINANCIAL_MODELING_PREP: "FMP",
+  FINNHUB: "Finnhub",
+  LICENSED_CORPORATE_EVENTS: "Licensed Events",
+  OTHER_OFFICIAL: "기타 공식",
+  OTHER_LICENSED: "기타 라이선스",
+};
 
 function playPaperOrderChime(): void {
   const AudioContextConstructor =
@@ -409,6 +538,35 @@ function formatWholeNumber(value: string | null, fallback: string): string {
   return BigInt(value).toLocaleString("ko-KR");
 }
 
+function formatCompactUsdTurnover(
+  value: string | null | undefined,
+  fallback = "",
+): string {
+  if (value === null || value === undefined || !/^\d+(?:\.\d+)?$/.test(value)) {
+    return fallback;
+  }
+  const whole = BigInt(value.split(".")[0] ?? "0");
+  const units = [
+    ["T", 1_000_000_000_000n],
+    ["B", 1_000_000_000n],
+    ["M", 1_000_000n],
+    ["K", 1_000n],
+  ] as const;
+  for (const [suffix, divisor] of units) {
+    if (whole >= divisor) {
+      const scaled = (whole * 100n) / divisor;
+      const integer = scaled / 100n;
+      const fraction = scaled % 100n;
+      const fractionText =
+        fraction === 0n
+          ? ""
+          : `.${fraction.toString().padStart(2, "0").replace(/0+$/, "")}`;
+      return `$${integer.toLocaleString("en-US")}${fractionText}${suffix}`;
+    }
+  }
+  return `$${whole.toLocaleString("en-US")}`;
+}
+
 function formatMarketPrice(
   value: string | null,
   currency: string,
@@ -533,6 +691,175 @@ function formatInformationTime(
     : value;
 }
 
+function calendarCategory(
+  kind: MarketCalendarEvent["kind"],
+): Exclude<CalendarCategoryFilter, "ALL"> {
+  if (
+    kind === "OPTIONS_EXPIRY" ||
+    kind === "FUTURES_EXPIRY" ||
+    kind === "OTHER_MARKET_STRUCTURE"
+  ) {
+    return "DERIVATIVES";
+  }
+  if (
+    kind === "INDEX_REBALANCE" ||
+    kind === "MSCI_REBALANCE" ||
+    kind === "RUSSELL_REBALANCE" ||
+    kind === "ETF_REBALANCE"
+  ) {
+    return "REBALANCE";
+  }
+  if (
+    [
+      "CENTRAL_BANK_RATE_DECISION",
+      "CENTRAL_BANK_MINUTES",
+      "CENTRAL_BANK_SPEECH",
+      "FOMC",
+      "MACRO_RELEASE",
+      "CPI",
+      "PPI",
+      "PCE",
+      "GDP",
+      "EMPLOYMENT",
+      "PMI",
+      "RETAIL_SALES",
+      "TRADE_BALANCE",
+      "EIA_INVENTORY",
+      "TREASURY_AUCTION",
+      "OTHER_MACRO",
+    ].includes(kind)
+  ) {
+    return "MACRO";
+  }
+  return "CORPORATE";
+}
+
+function formatCalendarEventTime(event: MarketCalendarEvent): string {
+  return new Intl.DateTimeFormat("ko-KR", {
+    timeZone: event.timezone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(event.scheduledAt));
+}
+
+function calendarMarketLabel(event: MarketCalendarEvent): string {
+  return event.marketScope === "KR"
+    ? "국내"
+    : event.marketScope === "US"
+      ? "미국"
+      : "글로벌";
+}
+
+function calendarDataQualityLabel(
+  quality: MarketCalendarEvent["dataQuality"],
+): string {
+  return (
+    {
+      OFFICIAL: "공식",
+      REGULATOR_EXCHANGE: "거래소·규제",
+      ISSUER_PRIMARY: "기업 1차",
+      LICENSED: "라이선스",
+      AGGREGATED: "집계",
+      HEADLINE_ONLY: "제목만",
+      DELAYED: "지연",
+      STALE: "오래됨",
+      UNSUPPORTED: "미지원",
+    } satisfies Record<MarketCalendarEvent["dataQuality"], string>
+  )[quality];
+}
+
+function calendarSourceStateLabel(state: CalendarSourceState): string {
+  return (
+    {
+      READY: "수신",
+      UNCONFIGURED: "미설정",
+      UNSUPPORTED: "미지원",
+      ERROR: "실패",
+    } satisfies Record<CalendarSourceState, string>
+  )[state];
+}
+
+function formatCalendarMetric(metric: MarketCalendarEvent["metrics"][number]): string {
+  return `${metric.name} ${metric.value}${metric.unit ? ` ${metric.unit}` : ""}`;
+}
+
+function buildCalendarMonthDays(month: string): readonly {
+  readonly date: string;
+  readonly inMonth: boolean;
+}[] {
+  const [yearText, monthText] = month.split("-");
+  const year = Number(yearText);
+  const monthIndex = Number(monthText) - 1;
+  const firstDay = new Date(Date.UTC(year, monthIndex, 1));
+  const startOffset = firstDay.getUTCDay();
+  const start = new Date(firstDay);
+  start.setUTCDate(firstDay.getUTCDate() - startOffset);
+  return Array.from({ length: 42 }, (_, index) => {
+    const day = new Date(start);
+    day.setUTCDate(start.getUTCDate() + index);
+    return {
+      date: day.toISOString().slice(0, 10),
+      inMonth: day.getUTCMonth() === monthIndex,
+    };
+  });
+}
+
+function TradingWorkspaceSkeleton({
+  statusLabel,
+}: {
+  readonly statusLabel: string;
+}) {
+  return (
+    <section
+      className="pt-trading-skeleton"
+      role="status"
+      aria-label="거래 화면 데이터 로딩"
+    >
+      <div className="pt-trading-skeleton__strip">
+        {Array.from({ length: 5 }, (_, index) => (
+          <span key={index} />
+        ))}
+      </div>
+      <div className="pt-trading-skeleton__header">
+        <div>
+          <span />
+          <strong />
+        </div>
+        <div>
+          {Array.from({ length: 6 }, (_, index) => (
+            <span key={index} />
+          ))}
+        </div>
+      </div>
+      <div className="pt-trading-skeleton__portfolio">
+        {Array.from({ length: 4 }, (_, index) => (
+          <span key={index} />
+        ))}
+      </div>
+      <div className="pt-trading-skeleton__grid">
+        <div className="pt-trading-skeleton__book">
+          {Array.from({ length: 12 }, (_, index) => (
+            <span key={index} />
+          ))}
+        </div>
+        <div className="pt-trading-skeleton__chart">
+          <span />
+          <i />
+          <i />
+          <i />
+          <strong>{statusLabel}</strong>
+        </div>
+      </div>
+      <div className="pt-trading-skeleton__insights">
+        <span />
+        <span />
+        <span />
+      </div>
+    </section>
+  );
+}
+
 export function App() {
   const hasDesktopRuntime = window.paperTradingDesktop !== undefined;
   const candles = useMemo(buildCandles, []);
@@ -591,6 +918,16 @@ export function App() {
   const [informationProvider, setInformationProvider] = useState<string | null>(
     null,
   );
+  const [calendarSelectedDate, setCalendarSelectedDate] =
+    useState("2026-07-22");
+  const [calendarMarketFilter, setCalendarMarketFilter] =
+    useState<CalendarMarketFilter>("ALL");
+  const [calendarCategoryFilter, setCalendarCategoryFilter] =
+    useState<CalendarCategoryFilter>("ALL");
+  const [calendarQualityFilter, setCalendarQualityFilter] =
+    useState<CalendarQualityFilter>("ALL");
+  const [selectedCalendarEventId, setSelectedCalendarEventId] =
+    useState<string | null>(null);
   const [selectedInformationItem, setSelectedInformationItem] =
     useState<DesktopInformationItemProjection | null>(null);
   const [selectedInstrument, setSelectedInstrument] = useState<{
@@ -862,6 +1199,11 @@ export function App() {
     selectedMarket,
     workspacePage,
   ]);
+
+  useEffect(() => {
+    if (!hasDesktopRuntime || workspacePage !== "CALENDAR") return;
+    void desktop.loadMarketCalendar(false);
+  }, [desktop.loadMarketCalendar, hasDesktopRuntime, workspacePage]);
 
   const handleChartIntervalChange = (nextInterval: ChartInterval) => {
     setInterval(nextInterval);
@@ -1176,6 +1518,8 @@ export function App() {
     liveChartCandles.length > 0
       ? liveChartCandles
       : baseChartCandles;
+  const shouldShowTradingSkeleton =
+    hasDesktopRuntime && workspacePage === "DASHBOARD" && !hasKisHistory;
   const orderBookReferenceStats = useMemo(() => {
     const canDerive52WeekRange =
       desktop.chart?.interval === "1d" &&
@@ -1312,6 +1656,55 @@ export function App() {
     informationProvider,
     watchlist,
   ]);
+  const calendarMonth = calendarSelectedDate.slice(0, 7);
+  const calendarMonthDays = useMemo(
+    () => buildCalendarMonthDays(calendarMonth),
+    [calendarMonth],
+  );
+  const marketCalendarEvents =
+    desktop.marketCalendar?.events ?? EMPTY_MARKET_CALENDAR_EVENTS;
+  const calendarLoading =
+    desktop.marketCalendar?.state === "LOADING" &&
+    marketCalendarEvents.length === 0;
+  const filteredCalendarEvents = useMemo(() => {
+    const events =
+      calendarMarketFilter === "ALL"
+        ? marketCalendarEvents
+        : marketCalendarEvents.filter((event) =>
+            event.affectedMarkets.includes(calendarMarketFilter),
+          );
+    return events
+      .filter(
+        (event) =>
+          calendarCategoryFilter === "ALL" ||
+          calendarCategory(event.kind) === calendarCategoryFilter,
+      )
+      .filter(
+        (event) =>
+          calendarQualityFilter === "ALL" ||
+          event.dataQuality === calendarQualityFilter,
+      )
+      .sort(
+        (left, right) =>
+          Date.parse(left.scheduledAt) - Date.parse(right.scheduledAt),
+      );
+  }, [
+    calendarCategoryFilter,
+    calendarMarketFilter,
+    calendarQualityFilter,
+    marketCalendarEvents,
+  ]);
+  const selectedDateCalendarEvents = filteredCalendarEvents.filter(
+    (event) => event.localDate === calendarSelectedDate,
+  );
+  const upcomingCalendarEvents = filteredCalendarEvents
+    .filter((event) => event.localDate >= calendarSelectedDate)
+    .slice(0, 8);
+  const selectedCalendarEvent =
+    filteredCalendarEvents.find((event) => event.id === selectedCalendarEventId) ??
+    selectedDateCalendarEvents[0] ??
+    upcomingCalendarEvents[0] ??
+    null;
   const sidebarInstruments = hasDesktopRuntime
     ? watchlist
       .filter((item) =>
@@ -1729,6 +2122,14 @@ export function App() {
           </button>
           <button
             type="button"
+            className={workspacePage === "CALENDAR" ? "active" : undefined}
+            aria-label="이벤트 캘린더"
+            onClick={() => setWorkspacePage("CALENDAR")}
+          >
+            <CalendarDays />
+          </button>
+          <button
+            type="button"
             className={workspacePage === "NEWS" ? "active" : undefined}
             aria-label="뉴스와 공시"
             onClick={() => setWorkspacePage("NEWS")}
@@ -1862,6 +2263,11 @@ export function App() {
           </div>
         </div>
 
+        {workspacePage === "DASHBOARD" ? (
+          shouldShowTradingSkeleton ? (
+            <TradingWorkspaceSkeleton statusLabel={chartStatusLabel} />
+          ) : (
+            <>
         <MarketContextStrip
           projection={desktop.marketContext}
           onRefresh={() => {
@@ -1877,7 +2283,6 @@ export function App() {
           />
         ) : null}
 
-        <div hidden={workspacePage !== "DASHBOARD"}>
         <InstrumentHeader
           name={activeInstrumentName}
           symbol={activeSymbol}
@@ -1970,14 +2375,13 @@ export function App() {
               label: "거래대금",
               value:
                 activeCurrency === "USD"
-                  ? `${formatMarketPrice(
-                      desktop.market?.cumulativeTurnover ?? null,
-                      "USD",
-                      "—",
-                    )}${desktop.market?.cumulativeTurnover === null || desktop.market?.cumulativeTurnover === undefined ? "" : " USD"}`
+                  ? formatCompactUsdTurnover(
+                      desktop.market?.cumulativeTurnover,
+                      hasDesktopRuntime ? "" : "$27.27B",
+                    )
                   : formatKrwTurnoverEok(
                       desktop.market?.cumulativeTurnover ?? null,
-                      hasDesktopRuntime ? "—" : "1.42조",
+                      hasDesktopRuntime ? "" : "1.42조",
                     ),
             },
           ]}
@@ -2232,7 +2636,9 @@ export function App() {
             }}
           />
         </div>
-        </div>
+            </>
+          )
+        ) : null}
 
         {workspacePage !== "DASHBOARD" ? (
           <section className="pt-functional-page" aria-live="polite">
@@ -2535,6 +2941,368 @@ export function App() {
                     아직 로컬 모의 체결이 없습니다.
                   </p>
                 )}
+              </article>
+            ) : null}
+
+            {workspacePage === "CALENDAR" ? (
+              <article className="pt-page-card pt-page-card--wide pt-calendar-page">
+                <div className="pt-page-card__toolbar">
+                  <div>
+                    <h2>
+                      {calendarMonth.replace("-", "년 ")}월 국내·미국 이벤트
+                    </h2>
+                    <p>
+                      {desktop.marketCalendar?.statusMessage ??
+                        "Electron runtime의 캘린더 projection을 기다리는 중입니다."}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void desktop.loadMarketCalendar(true)}
+                  >
+                    새로고침
+                  </button>
+                  <input
+                    type="month"
+                    value={calendarMonth}
+                    aria-label="캘린더 월"
+                    onChange={(event) =>
+                      setCalendarSelectedDate(`${event.currentTarget.value}-01`)
+                    }
+                  />
+                </div>
+                <div className="pt-calendar-filters" aria-label="캘린더 필터">
+                  {(Object.keys(CALENDAR_MARKET_LABELS) as CalendarMarketFilter[]).map(
+                    (filter) => (
+                      <button
+                        type="button"
+                        key={filter}
+                        className={
+                          calendarMarketFilter === filter ? "active" : undefined
+                        }
+                        onClick={() => setCalendarMarketFilter(filter)}
+                      >
+                        {CALENDAR_MARKET_LABELS[filter]}
+                      </button>
+                    ),
+                  )}
+                  {(Object.keys(CALENDAR_CATEGORY_LABELS) as CalendarCategoryFilter[]).map(
+                    (filter) => (
+                      <button
+                        type="button"
+                        key={filter}
+                        className={
+                          calendarCategoryFilter === filter
+                            ? "active"
+                            : undefined
+                        }
+                        onClick={() => setCalendarCategoryFilter(filter)}
+                      >
+                        {CALENDAR_CATEGORY_LABELS[filter]}
+                      </button>
+                    ),
+                  )}
+                  {(Object.keys(CALENDAR_QUALITY_LABELS) as CalendarQualityFilter[]).map(
+                    (filter) => (
+                      <button
+                        type="button"
+                        key={filter}
+                        className={
+                          calendarQualityFilter === filter ? "active" : undefined
+                        }
+                        onClick={() => setCalendarQualityFilter(filter)}
+                      >
+                        {CALENDAR_QUALITY_LABELS[filter]}
+                      </button>
+                    ),
+                  )}
+                </div>
+                <div className="pt-calendar-layout">
+                  <section className="pt-calendar-month" aria-label="월간 이벤트 캘린더">
+                    {["일", "월", "화", "수", "목", "금", "토"].map((day) => (
+                      <strong key={day} className="pt-calendar-weekday">
+                        {day}
+                      </strong>
+                    ))}
+                    {calendarMonthDays.map((day) => {
+                      const dayEvents = filteredCalendarEvents.filter(
+                        (event) => event.localDate === day.date,
+                      );
+                      return (
+                        <button
+                          type="button"
+                          key={day.date}
+                          className={
+                            day.date === calendarSelectedDate
+                              ? "pt-calendar-day pt-calendar-day--selected"
+                              : calendarLoading && day.inMonth
+                                ? "pt-calendar-day pt-calendar-day--loading"
+                                : "pt-calendar-day"
+                          }
+                          data-muted={!day.inMonth}
+                          onClick={() => setCalendarSelectedDate(day.date)}
+                        >
+                          <span>{Number(day.date.slice(8, 10))}</span>
+                          <span className="pt-calendar-day__dots">
+                            {calendarLoading && day.inMonth
+                              ? [0, 1, 2].map((index) => (
+                                  <i key={index} data-importance="loading" />
+                                ))
+                              : dayEvents.slice(0, 4).map((event) => (
+                                  <i
+                                    key={event.id}
+                                    data-importance={event.importance.toLowerCase()}
+                                    title={CALENDAR_KIND_LABELS[event.kind]}
+                                  />
+                                ))}
+                          </span>
+                          {dayEvents.length > 4 ? (
+                            <em>+{dayEvents.length - 4}</em>
+                          ) : null}
+                        </button>
+                      );
+                    })}
+                  </section>
+                  <aside className="pt-calendar-agenda" aria-label="선택 날짜 이벤트">
+                    <header>
+                      <div>
+                        <strong>{calendarSelectedDate}</strong>
+                        <span>{selectedDateCalendarEvents.length}개 이벤트</span>
+                      </div>
+                      <span>
+                        {desktop.marketCalendar?.source === "PROVIDER"
+                          ? "provider projection"
+                          : "fixture projection"}
+                      </span>
+                    </header>
+                    {calendarLoading ? (
+                      <ol aria-label="캘린더 로딩">
+                        {[0, 1, 2, 3].map((index) => (
+                          <li key={index} className="pt-calendar-agenda__skeleton">
+                            <time />
+                            <div>
+                              <p>
+                                <span />
+                                <span />
+                                <span />
+                              </p>
+                              <strong />
+                              <small />
+                            </div>
+                          </li>
+                        ))}
+                      </ol>
+                    ) : selectedDateCalendarEvents.length > 0 ? (
+                      <ol>
+                        {selectedDateCalendarEvents.map((event) => (
+                          <li
+                            key={event.id}
+                            className={
+                              selectedCalendarEvent?.id === event.id
+                                ? "pt-calendar-agenda__item pt-calendar-agenda__item--selected"
+                                : "pt-calendar-agenda__item"
+                            }
+                          >
+                            <button
+                              type="button"
+                              onClick={() => setSelectedCalendarEventId(event.id)}
+                            >
+                              <time dateTime={event.scheduledAt}>
+                                {formatCalendarEventTime(event)}
+                              </time>
+                              <div>
+                                <p>
+                                  <span>{calendarMarketLabel(event)}</span>
+                                  <span>{CALENDAR_KIND_LABELS[event.kind]}</span>
+                                  <span>{calendarDataQualityLabel(event.dataQuality)}</span>
+                                </p>
+                                <strong>{event.titleKo}</strong>
+                                <small>
+                                  {event.instrumentIds.length > 0
+                                    ? event.instrumentIds.join(", ")
+                                    : event.affectedMarkets
+                                        .map((market) => CALENDAR_MARKET_LABELS[market])
+                                        .join(" · ")}
+                                </small>
+                                {event.metrics.length > 0 ? (
+                                  <footer>
+                                    {event.metrics.slice(0, 3).map((metric) => (
+                                      <span
+                                        key={`${event.id}:${metric.name}:${metric.value}`}
+                                      >
+                                        {formatCalendarMetric(metric)}
+                                      </span>
+                                    ))}
+                                  </footer>
+                                ) : null}
+                              </div>
+                            </button>
+                          </li>
+                        ))}
+                      </ol>
+                    ) : (
+                      <p className="pt-page-card__empty">
+                        선택한 날짜와 필터에 맞는 이벤트가 없습니다.
+                      </p>
+                    )}
+                  </aside>
+                </div>
+                <section className="pt-calendar-sources" aria-label="캘린더 provider 상태">
+                  <header>
+                    <strong>데이터 provider 상태</strong>
+                    <span>{desktop.marketCalendar?.sources.length ?? 0}개 source</span>
+                  </header>
+                  {calendarLoading ? (
+                    <div className="pt-calendar-sources__skeleton">
+                      {[0, 1, 2, 3].map((index) => (
+                        <span key={index} />
+                      ))}
+                    </div>
+                  ) : desktop.marketCalendar?.sources.length ? (
+                    <ul>
+                      {desktop.marketCalendar.sources.map((source) => (
+                        <li key={source.provider}>
+                          <strong>{CALENDAR_PROVIDER_LABELS[source.provider]}</strong>
+                          <span data-state={source.state.toLowerCase()}>
+                            {calendarSourceStateLabel(source.state)}
+                          </span>
+                          <small>
+                            {source.itemCount}개 수신 · {source.insertedCount}개 신규
+                          </small>
+                          <em>{source.message}</em>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>provider 상태가 아직 없습니다.</p>
+                  )}
+                </section>
+                <section className="pt-calendar-detail" aria-label="선택 이벤트 상세">
+                  <header>
+                    <strong>이벤트 상세</strong>
+                    <span>
+                      {selectedCalendarEvent
+                        ? CALENDAR_PROVIDER_LABELS[selectedCalendarEvent.provider]
+                        : "선택 없음"}
+                    </span>
+                  </header>
+                  {calendarLoading ? (
+                    <div className="pt-calendar-detail__skeleton">
+                      <strong />
+                      <span />
+                      <span />
+                      <span />
+                    </div>
+                  ) : selectedCalendarEvent ? (
+                    <div className="pt-calendar-detail__body">
+                      <h3>{selectedCalendarEvent.titleKo}</h3>
+                      <dl>
+                        <div>
+                          <dt>일시</dt>
+                          <dd>
+                            {selectedCalendarEvent.localDate}{" "}
+                            {formatCalendarEventTime(selectedCalendarEvent)}{" "}
+                            {selectedCalendarEvent.timezone}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>범위</dt>
+                          <dd>
+                            {selectedCalendarEvent.affectedMarkets
+                              .map((market) => CALENDAR_MARKET_LABELS[market])
+                              .join(" · ")}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>종목</dt>
+                          <dd>
+                            {selectedCalendarEvent.instrumentIds.length > 0
+                              ? selectedCalendarEvent.instrumentIds.join(", ")
+                              : "시장 전체"}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>상태</dt>
+                          <dd>
+                            {selectedCalendarEvent.status} ·{" "}
+                            {calendarDataQualityLabel(selectedCalendarEvent.dataQuality)}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>근거</dt>
+                          <dd>{selectedCalendarEvent.evidenceIds.join(", ")}</dd>
+                        </div>
+                        <div>
+                          <dt>원문</dt>
+                          <dd>{selectedCalendarEvent.sourceUrl ?? "원문 URL 미제공"}</dd>
+                        </div>
+                      </dl>
+                      {selectedCalendarEvent.metrics.length > 0 ? (
+                        <footer>
+                          {selectedCalendarEvent.metrics.map((metric) => (
+                            <span
+                              key={`${selectedCalendarEvent.id}:${metric.name}:${metric.value}`}
+                            >
+                              {formatCalendarMetric(metric)}
+                            </span>
+                          ))}
+                        </footer>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <p>선택한 필터에 맞는 이벤트가 없습니다.</p>
+                  )}
+                </section>
+                <section className="pt-calendar-workspace-scope">
+                  <header>
+                    <strong>전체 예정 이벤트</strong>
+                    <span>선택 종목과 무관하게 모든 기업·시장 일정 표시</span>
+                  </header>
+                  {calendarLoading ? (
+                    <ol aria-label="종목 캘린더 로딩">
+                      {[0, 1, 2].map((index) => (
+                        <li
+                          key={index}
+                          className="pt-calendar-workspace-scope__skeleton"
+                        >
+                          <time />
+                          <strong />
+                          <span />
+                        </li>
+                      ))}
+                    </ol>
+                  ) : upcomingCalendarEvents.length > 0 ? (
+                    <ol>
+                      {upcomingCalendarEvents.map((event) => (
+                        <li
+                          key={event.id}
+                          className={
+                            selectedCalendarEvent?.id === event.id
+                              ? "pt-calendar-workspace-scope__item pt-calendar-workspace-scope__item--selected"
+                              : "pt-calendar-workspace-scope__item"
+                          }
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCalendarSelectedDate(event.localDate);
+                              setSelectedCalendarEventId(event.id);
+                            }}
+                          >
+                            <time>{event.localDate}</time>
+                            <strong>{event.titleKo}</strong>
+                            <span>
+                              {CALENDAR_KIND_LABELS[event.kind]} ·{" "}
+                              {calendarDataQualityLabel(event.dataQuality)}
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ol>
+                  ) : (
+                    <p>선택한 필터에 맞는 예정 이벤트가 없습니다.</p>
+                  )}
+                </section>
               </article>
             ) : null}
 

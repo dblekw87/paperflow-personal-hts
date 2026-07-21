@@ -6,6 +6,7 @@ import {
   requireKisCredentialsForEnvironment,
   publicConfig,
   requireOpenDartCredentials,
+  requirePublicDataPortalCredentials,
   requireFinnhubApiKey,
   requireSecRequestIdentity,
   assertLiveReadOnlyAcknowledgement,
@@ -64,6 +65,12 @@ import {
   OpenDartClient,
   type OpenDartCorpCode,
 } from "../../../../src/disclosures/open-dart-client.js";
+import { FederalReserveFomcCalendarClient } from "../../../../src/calendar/federal-reserve-fomc-client.js";
+import { BlsReleaseCalendarClient } from "../../../../src/calendar/bls-release-calendar-client.js";
+import { BeaReleaseScheduleClient } from "../../../../src/calendar/bea-release-schedule-client.js";
+import { KsdRightsScheduleClient } from "../../../../src/calendar/ksd-rights-schedule-client.js";
+import { KindListingScheduleClient } from "../../../../src/calendar/kind-listing-schedule-client.js";
+import { openDartFilingsToCalendarEvents } from "../../../../src/calendar/open-dart-calendar-adapter.js";
 import { KisRestClient } from "../../../../src/kis/rest-client.js";
 import { KisDomesticInvestorFlowClient } from "../../../../src/kis/domestic-investor-flow.js";
 import { DomesticKisLiveStream } from "../../../../src/kis/ws/live-stream.js";
@@ -79,6 +86,7 @@ import {
 import { openUserDataDatabase } from "../../../../src/storage/database.js";
 import { LocalPaperTradingRepository } from "../../../../src/storage/paper-repository.js";
 import { LocalInformationRepository } from "../../../../src/storage/information-repository.js";
+import { LocalMarketCalendarRepository } from "../../../../src/storage/market-calendar-repository.js";
 import { LocalMarketSnapshotRepository } from "../../../../src/storage/market-snapshot-repository.js";
 import { LocalSimulationRepository } from "../../../../src/storage/repository.js";
 import type {
@@ -99,6 +107,8 @@ import type {
   DesktopInformationItemProjection,
   DesktopInvestorFlowProjection,
   DesktopInstrumentSearchProjection,
+  DesktopMarketCalendarProjection,
+  DesktopMarketCalendarSourceProjection,
   DesktopMarketContextItemProjection,
   DesktopMarketContextProjection,
   DesktopPaperOrderRequest,
@@ -124,6 +134,264 @@ const CHART_REQUEST_MINIMUM_GAP_MS = 1_000;
 const INFORMATION_CACHE_TTL_MS = 30_000;
 const MARKET_CONTEXT_CACHE_TTL_MS = 15_000;
 const MARKET_CONTEXT_REQUEST_GAP_MS = 120;
+const MARKET_CALENDAR_CACHE_TTL_MS = 5 * 60_000;
+
+function fixtureMarketCalendarProjection(): DesktopMarketCalendarProjection {
+  const detectedAt = "2026-07-22T00:00:00.000Z";
+  return {
+    schemaVersion: 1,
+    state: "READY",
+    source: "FIXTURE",
+    fetchedAt: new Date().toISOString(),
+    statusMessage:
+      "캘린더 provider adapter 연결 전 fixture projection입니다. 실제 일정은 provider 연결 후 교체됩니다.",
+    sources: [
+      {
+        provider: "OTHER_OFFICIAL",
+        state: "READY",
+        itemCount: 8,
+        insertedCount: 8,
+        dataQuality: "UNSUPPORTED",
+        fetchedAt: detectedAt,
+        message: "캘린더 UI fixture",
+      },
+    ],
+    events: [
+      {
+        id: "calendar-kr-samsung-earnings-2026-q2",
+        kind: "EARNINGS",
+        marketScope: "KR",
+        affectedMarkets: ["KR"],
+        instrumentIds: ["KRX:005930"],
+        titleKo: "삼성전자 2분기 실적 발표 예정",
+        titleOriginal: null,
+        scheduledAt: "2026-07-22T00:00:00.000Z",
+        localDate: "2026-07-22",
+        timezone: "Asia/Seoul",
+        status: "SCHEDULED",
+        importance: "HIGH",
+        provider: "OTHER_OFFICIAL",
+        sourceEventId: "fixture-samsung-ir-2026-q2",
+        sourceUrl: null,
+        dataQuality: "ISSUER_PRIMARY",
+        metrics: [
+          {
+            name: "REVENUE",
+            value: "74000000000000",
+            unit: "KRW",
+            currency: "KRW",
+            evidenceId: "fixture-evidence-samsung-ir",
+          },
+        ],
+        evidenceIds: ["fixture-evidence-samsung-ir"],
+        supersedesEventId: null,
+        detectedAt,
+        updatedAt: detectedAt,
+        payloadVersion: 1,
+      },
+      {
+        id: "calendar-kr-rights-exdate-005930",
+        kind: "EX_DIVIDEND",
+        marketScope: "KR",
+        affectedMarkets: ["KR"],
+        instrumentIds: ["KRX:005930"],
+        titleKo: "삼성전자 분기배당 권리락",
+        titleOriginal: null,
+        scheduledAt: "2026-07-22T00:00:00.000Z",
+        localDate: "2026-07-22",
+        timezone: "Asia/Seoul",
+        status: "CONFIRMED",
+        importance: "MEDIUM",
+        provider: "KSD_RIGHTS_SCHEDULE",
+        sourceEventId: "fixture-ksd-005930-exdiv",
+        sourceUrl: null,
+        dataQuality: "DELAYED",
+        metrics: [
+          {
+            name: "DPS",
+            value: "361",
+            unit: "KRW/share",
+            currency: "KRW",
+            evidenceId: "fixture-evidence-ksd-rights",
+          },
+        ],
+        evidenceIds: ["fixture-evidence-ksd-rights"],
+        supersedesEventId: null,
+        detectedAt,
+        updatedAt: detectedAt,
+        payloadVersion: 1,
+      },
+      {
+        id: "calendar-us-nvda-earnings",
+        kind: "EARNINGS",
+        marketScope: "US",
+        affectedMarkets: ["US"],
+        instrumentIds: ["NASDAQ:NVDA"],
+        titleKo: "NVIDIA 실적 발표",
+        titleOriginal: "NVIDIA earnings release",
+        scheduledAt: "2026-07-22T20:05:00.000Z",
+        localDate: "2026-07-22",
+        timezone: "America/New_York",
+        status: "SCHEDULED",
+        importance: "CRITICAL",
+        provider: "FINANCIAL_MODELING_PREP",
+        sourceEventId: "fixture-fmp-nvda-earnings",
+        sourceUrl: null,
+        dataQuality: "AGGREGATED",
+        metrics: [
+          {
+            name: "EPS",
+            value: "0.93",
+            unit: "USD/share",
+            currency: "USD",
+            evidenceId: "fixture-evidence-fmp-earnings",
+          },
+          {
+            name: "CONSENSUS",
+            value: "0.91",
+            unit: "USD/share",
+            currency: "USD",
+            evidenceId: "fixture-evidence-fmp-earnings",
+          },
+        ],
+        evidenceIds: ["fixture-evidence-fmp-earnings"],
+        supersedesEventId: null,
+        detectedAt,
+        updatedAt: detectedAt,
+        payloadVersion: 1,
+      },
+      {
+        id: "calendar-us-aapl-exdiv",
+        kind: "EX_DIVIDEND",
+        marketScope: "US",
+        affectedMarkets: ["US"],
+        instrumentIds: ["NASDAQ:AAPL"],
+        titleKo: "Apple ex-dividend",
+        titleOriginal: "Apple ex-dividend date",
+        scheduledAt: "2026-07-22T13:30:00.000Z",
+        localDate: "2026-07-22",
+        timezone: "America/New_York",
+        status: "CONFIRMED",
+        importance: "MEDIUM",
+        provider: "NASDAQ_DAILY_LIST",
+        sourceEventId: "fixture-nasdaq-aapl-exdiv",
+        sourceUrl: null,
+        dataQuality: "REGULATOR_EXCHANGE",
+        metrics: [
+          {
+            name: "DPS",
+            value: "0.26",
+            unit: "USD/share",
+            currency: "USD",
+            evidenceId: "fixture-evidence-nasdaq-daily-list",
+          },
+        ],
+        evidenceIds: ["fixture-evidence-nasdaq-daily-list"],
+        supersedesEventId: null,
+        detectedAt,
+        updatedAt: detectedAt,
+        payloadVersion: 1,
+      },
+      {
+        id: "calendar-global-us-cpi-2026-08",
+        kind: "CPI",
+        marketScope: "GLOBAL",
+        affectedMarkets: ["GLOBAL", "KR", "US"],
+        instrumentIds: [],
+        titleKo: "미국 CPI 발표",
+        titleOriginal: "Consumer Price Index",
+        scheduledAt: "2026-08-12T12:30:00.000Z",
+        localDate: "2026-08-12",
+        timezone: "America/New_York",
+        status: "SCHEDULED",
+        importance: "CRITICAL",
+        provider: "US_BLS",
+        sourceEventId: "fixture-bls-cpi-2026-08",
+        sourceUrl: "https://www.bls.gov/schedule/",
+        dataQuality: "OFFICIAL",
+        metrics: [],
+        evidenceIds: ["fixture-evidence-bls-cpi"],
+        supersedesEventId: null,
+        detectedAt,
+        updatedAt: detectedAt,
+        payloadVersion: 1,
+      },
+      {
+        id: "calendar-global-fomc-2026-07",
+        kind: "FOMC",
+        marketScope: "GLOBAL",
+        affectedMarkets: ["GLOBAL", "KR", "US"],
+        instrumentIds: [],
+        titleKo: "FOMC 금리결정",
+        titleOriginal: "FOMC policy decision",
+        scheduledAt: "2026-07-29T18:00:00.000Z",
+        localDate: "2026-07-29",
+        timezone: "America/New_York",
+        status: "SCHEDULED",
+        importance: "CRITICAL",
+        provider: "US_FEDERAL_RESERVE",
+        sourceEventId: "fixture-fomc-2026-07",
+        sourceUrl:
+          "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+        dataQuality: "OFFICIAL",
+        metrics: [],
+        evidenceIds: ["fixture-evidence-fed-fomc"],
+        supersedesEventId: null,
+        detectedAt,
+        updatedAt: detectedAt,
+        payloadVersion: 1,
+      },
+      {
+        id: "calendar-kr-options-expiry-2026-08",
+        kind: "OPTIONS_EXPIRY",
+        marketScope: "KR",
+        affectedMarkets: ["KR"],
+        instrumentIds: [],
+        titleKo: "국내 지수 옵션만기",
+        titleOriginal: null,
+        scheduledAt: "2026-08-13T06:20:00.000Z",
+        localDate: "2026-08-13",
+        timezone: "Asia/Seoul",
+        status: "SCHEDULED",
+        importance: "HIGH",
+        provider: "KRX_DERIVATIVES",
+        sourceEventId: "fixture-krx-options-expiry-2026-08",
+        sourceUrl: null,
+        dataQuality: "REGULATOR_EXCHANGE",
+        metrics: [],
+        evidenceIds: ["fixture-evidence-krx-derivatives"],
+        supersedesEventId: null,
+        detectedAt,
+        updatedAt: detectedAt,
+        payloadVersion: 1,
+      },
+      {
+        id: "calendar-global-msci-review-2026-08",
+        kind: "MSCI_REBALANCE",
+        marketScope: "GLOBAL",
+        affectedMarkets: ["GLOBAL", "KR", "US"],
+        instrumentIds: [],
+        titleKo: "MSCI 분기 리뷰 발표",
+        titleOriginal: "MSCI quarterly index review",
+        scheduledAt: "2026-08-12T21:00:00.000Z",
+        localDate: "2026-08-12",
+        timezone: "America/New_York",
+        status: "SCHEDULED",
+        importance: "HIGH",
+        provider: "MSCI",
+        sourceEventId: "fixture-msci-review-2026-08",
+        sourceUrl: "https://www.msci.com/eqb/fm/index_review.html",
+        dataQuality: "OFFICIAL",
+        metrics: [],
+        evidenceIds: ["fixture-evidence-msci-review"],
+        supersedesEventId: null,
+        detectedAt,
+        updatedAt: detectedAt,
+        payloadVersion: 1,
+      },
+    ],
+  };
+}
 
 export function desktopChartCacheTtlMs(
   interval: DesktopChartInterval,
@@ -955,12 +1223,14 @@ export class DesktopRuntime {
   readonly #accounts: LocalSimulationRepository;
   readonly #papers: LocalPaperTradingRepository;
   readonly #information: LocalInformationRepository;
+  readonly #marketCalendar: LocalMarketCalendarRepository;
   readonly #marketSnapshots: LocalMarketSnapshotRepository;
   readonly #instrumentMaster: KisDomesticInstrumentMaster;
   readonly #usInstrumentMaster: KisUsInstrumentMaster;
   readonly #emitMarket: (projection: DesktopMarketProjection) => void;
   readonly #emitAccount: (projection: DesktopAccountProjection) => void;
   readonly #emitChart: (projection: DesktopChartProjection) => void;
+  readonly #calendarFetch: typeof fetch | null;
   #symbol: string;
   #usExchange: "NAS" | "NYS" | "AMS" | null = null;
   readonly #simulationProfile:
@@ -992,6 +1262,9 @@ export class DesktopRuntime {
   #marketContextCache:
     | { readonly projection: DesktopMarketContextProjection; readonly at: number }
     | null = null;
+  #marketCalendarCache:
+    | { readonly projection: DesktopMarketCalendarProjection; readonly at: number }
+    | null = null;
   readonly #streams = new Set<DomesticKisLiveStream>();
   #marketConnectionGeneration = 0;
   #marketSequence = 0n;
@@ -1003,6 +1276,7 @@ export class DesktopRuntime {
     emitMarket: (projection: DesktopMarketProjection) => void;
     emitAccount?: (projection: DesktopAccountProjection) => void;
     emitChart?: (projection: DesktopChartProjection) => void;
+    calendarFetch?: typeof fetch | null;
   }) {
     const config = loadRuntimeConfig();
     this.#symbol = config.KIS_DOMESTIC_SYMBOL;
@@ -1013,6 +1287,7 @@ export class DesktopRuntime {
     this.#accounts = new LocalSimulationRepository(this.#database);
     this.#papers = new LocalPaperTradingRepository(this.#database);
     this.#information = new LocalInformationRepository(this.#database);
+    this.#marketCalendar = new LocalMarketCalendarRepository(this.#database);
     this.#marketSnapshots = new LocalMarketSnapshotRepository(this.#database);
     this.#instrumentMaster = new KisDomesticInstrumentMaster({
       userDataPath: options.userDataPath,
@@ -1023,6 +1298,7 @@ export class DesktopRuntime {
     this.#emitMarket = options.emitMarket;
     this.#emitAccount = options.emitAccount ?? (() => undefined);
     this.#emitChart = options.emitChart ?? (() => undefined);
+    this.#calendarFetch = options.calendarFetch === undefined ? fetch : options.calendarFetch;
     this.#market = initialMarket(this.#symbol);
     this.#chart = initialChart(this.#symbol);
     this.#ensureDefaultAccount();
@@ -1379,6 +1655,214 @@ export class DesktopRuntime {
     });
     this.#marketContextRequest = request;
     return request;
+  }
+
+  public async getMarketCalendar(
+    forceRefresh = false,
+  ): Promise<DesktopMarketCalendarProjection> {
+    if (
+      !forceRefresh &&
+      this.#marketCalendarCache !== null &&
+      Date.now() - this.#marketCalendarCache.at < MARKET_CALENDAR_CACHE_TTL_MS
+    ) {
+      return this.#marketCalendarCache.projection;
+    }
+    const year = new Date().getUTCFullYear();
+    let events = this.#marketCalendar.listRange({
+      dateFrom: `${year}-01-01`,
+      dateTo: `${year}-12-31`,
+      limit: 1_000,
+    });
+    const providerSources: DesktopMarketCalendarSourceProjection[] = [];
+    if (this.#calendarFetch !== null) {
+      const providerResults = await this.#ingestMarketCalendarProviders(year);
+      providerSources.push(...providerResults);
+      events = this.#marketCalendar.listRange({
+        dateFrom: `${year}-01-01`,
+        dateTo: `${year}-12-31`,
+        limit: 1_000,
+      });
+    }
+    const providerMessage =
+      providerSources.length > 0
+        ? providerSources.map((source) => source.message).join(" · ")
+        : "SQLite 캘린더 projection";
+    const projection =
+      events.length > 0
+        ? {
+            schemaVersion: 1,
+            state: "READY",
+            source: "PROVIDER",
+            fetchedAt: new Date().toISOString(),
+            statusMessage: `${providerMessage} · ${events.length}개 이벤트`,
+            sources: providerSources,
+            events,
+          } satisfies DesktopMarketCalendarProjection
+        : fixtureMarketCalendarProjection();
+    this.#marketCalendarCache = { projection, at: Date.now() };
+    return projection;
+  }
+
+  async #ingestMarketCalendarProviders(year: number): Promise<
+    readonly DesktopMarketCalendarSourceProjection[]
+  > {
+    const sources: DesktopMarketCalendarSourceProjection[] = [];
+    const providers = [
+      ["US_FEDERAL_RESERVE", "Federal Reserve FOMC", new FederalReserveFomcCalendarClient({
+        fetch: this.#calendarFetch!,
+      })] as const,
+      ["US_BLS", "BLS", new BlsReleaseCalendarClient({ fetch: this.#calendarFetch! })] as const,
+      ["US_BEA", "BEA", new BeaReleaseScheduleClient({ fetch: this.#calendarFetch! })] as const,
+    ];
+    for (const [provider, label, client] of providers) {
+      try {
+        const events = await client.getEvents();
+        let inserted = 0;
+        for (const event of events) {
+          inserted += this.#marketCalendar.ingest(event) ? 1 : 0;
+        }
+        sources.push({
+          provider,
+          state: "READY",
+          itemCount: events.length,
+          insertedCount: inserted,
+          dataQuality: "OFFICIAL",
+          fetchedAt: new Date().toISOString(),
+          message: `${label} ${events.length}개 수신/${inserted}개 신규`,
+        });
+      } catch (error) {
+        sources.push({
+          provider,
+          state: "ERROR",
+          itemCount: 0,
+          insertedCount: 0,
+          dataQuality: null,
+          fetchedAt: null,
+          message:
+            error instanceof Error
+              ? `${label} 실패(${error.message})`
+              : `${label} 실패`,
+        });
+      }
+    }
+    try {
+      const client = new KindListingScheduleClient({
+        fetch: this.#calendarFetch!,
+      });
+      const events = await client.getEvents({
+        fromDate: `${year}-01-01`,
+        toDate: `${year}-12-31`,
+      });
+      let inserted = 0;
+      for (const event of events) {
+        inserted += this.#marketCalendar.ingest(event) ? 1 : 0;
+      }
+      sources.push({
+        provider: "KIND_KRX",
+        state: "READY",
+        itemCount: events.length,
+        insertedCount: inserted,
+        dataQuality: "REGULATOR_EXCHANGE",
+        fetchedAt: new Date().toISOString(),
+        message: `KIND 상장일정 ${events.length}개 수신/${inserted}개 신규`,
+      });
+    } catch (error) {
+      sources.push({
+        provider: "KIND_KRX",
+        state: "ERROR",
+        itemCount: 0,
+        insertedCount: 0,
+        dataQuality: "REGULATOR_EXCHANGE",
+        fetchedAt: null,
+        message:
+          error instanceof Error
+            ? `KIND 상장일정 실패(${error.message})`
+            : "KIND 상장일정 실패",
+      });
+    }
+    try {
+      const config = loadRuntimeConfig();
+      const credentials = requirePublicDataPortalCredentials(config);
+      const client = new KsdRightsScheduleClient({
+        credentials,
+        fetch: this.#calendarFetch!,
+      });
+      const events = await client.getEvents();
+      let inserted = 0;
+      for (const event of events) {
+        inserted += this.#marketCalendar.ingest(event) ? 1 : 0;
+      }
+      sources.push({
+        provider: "KSD_RIGHTS_SCHEDULE",
+        state: "READY",
+        itemCount: events.length,
+        insertedCount: inserted,
+        dataQuality: "DELAYED",
+        fetchedAt: new Date().toISOString(),
+        message: `예탁원 권리일정 ${events.length}개 수신/${inserted}개 신규`,
+      });
+    } catch (error) {
+      const unconfigured =
+        error instanceof Error &&
+        error.message === "PUBLIC_DATA_PORTAL_PROVIDER_UNCONFIGURED";
+      sources.push({
+        provider: "KSD_RIGHTS_SCHEDULE",
+        state: unconfigured ? "UNCONFIGURED" : "ERROR",
+        itemCount: 0,
+        insertedCount: 0,
+        dataQuality: "DELAYED",
+        fetchedAt: null,
+        message: unconfigured ? "예탁원 권리일정 미설정" : "예탁원 권리일정 실패",
+      });
+    }
+    try {
+      const config = loadRuntimeConfig();
+      const credentials = requireOpenDartCredentials(config);
+      const client = new OpenDartClient({
+        credentials,
+        fetchImplementation: this.#calendarFetch!,
+      });
+      const providerDate = koreanCalendarDate();
+      const page = await client.listFilings({
+        beginDate: providerDate,
+        endDate: providerDate,
+      });
+      const byCorpCode = new Map<string, string | null>();
+      for (const filing of page.items) {
+        byCorpCode.set(filing.corpCode, filing.stockCode);
+      }
+      const events = openDartFilingsToCalendarEvents({
+        filings: page.items,
+        stockCodeByCorpCode: byCorpCode,
+        obtainedAt: page.obtainedAt,
+      });
+      let inserted = 0;
+      for (const event of events) {
+        inserted += this.#marketCalendar.ingest(event) ? 1 : 0;
+      }
+      sources.push({
+        provider: "OPEN_DART",
+        state: "READY",
+        itemCount: events.length,
+        insertedCount: inserted,
+        dataQuality: "ISSUER_PRIMARY",
+        fetchedAt: new Date().toISOString(),
+        message: `OpenDART ${events.length}개 수신/${inserted}개 신규`,
+      });
+    } catch (error) {
+      const unconfigured =
+        error instanceof Error && error.message === "DART_PROVIDER_UNCONFIGURED";
+      sources.push({
+        provider: "OPEN_DART",
+        state: unconfigured ? "UNCONFIGURED" : "ERROR",
+        itemCount: 0,
+        insertedCount: 0,
+        dataQuality: "ISSUER_PRIMARY",
+        fetchedAt: null,
+        message: unconfigured ? "OpenDART 미설정" : "OpenDART 실패",
+      });
+    }
+    return sources;
   }
 
   async #loadMarketContext(): Promise<DesktopMarketContextProjection> {

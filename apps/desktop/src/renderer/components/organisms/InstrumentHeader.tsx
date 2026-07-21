@@ -43,6 +43,9 @@ export function InstrumentHeader({
   watched,
   onToggleWatch,
 }: InstrumentHeaderProps) {
+  const visibleMetrics = metrics.filter(
+    (metric) => metric.value.trim() !== "" && metric.value !== "—",
+  );
   return (
     <header className="pt-instrument-header">
       <div className="pt-instrument-header__identity">
@@ -68,7 +71,12 @@ export function InstrumentHeader({
         aria-live="polite"
         aria-atomic="true"
       >
-        <PriceText value={price} direction={direction} emphasis="strong" />
+        <PriceText
+          value={price}
+          direction={direction}
+          emphasis="strong"
+          hideDirectionIcon
+        />
         <PriceText
           value={`${change} (${changeRate}%)`}
           direction={direction}
@@ -77,7 +85,7 @@ export function InstrumentHeader({
       </div>
 
       <div className="pt-instrument-header__metrics">
-        {metrics.map((metric) => (
+        {visibleMetrics.map((metric) => (
           <Metric
             key={metric.label}
             label={metric.label}

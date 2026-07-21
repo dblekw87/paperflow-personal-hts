@@ -9,6 +9,11 @@ import {
   isDesktopPaperMarketExecutable,
   resolveDesktopMarketSession,
 } from "../apps/desktop/src/main/desktop-runtime.js";
+import { BLS_RELEASE_ICS_URL } from "../src/calendar/bls-release-calendar-client.js";
+import { BEA_RELEASE_SCHEDULE_URL } from "../src/calendar/bea-release-schedule-client.js";
+import { FEDERAL_RESERVE_FOMC_CALENDAR_URL } from "../src/calendar/federal-reserve-fomc-client.js";
+import { KIND_LISTING_COMPANY_URL } from "../src/calendar/kind-listing-schedule-client.js";
+import { KSD_RIGHTS_SCHEDULE_URL } from "../src/calendar/ksd-rights-schedule-client.js";
 import type { MarketLiveProjection } from "../src/contracts/market-live-projection.js";
 import type {
   PaperExecutionPlan,
@@ -41,8 +46,71 @@ function createRuntime(userDataPath: string) {
   return new DesktopRuntime({
     userDataPath,
     emitMarket: () => undefined,
+    calendarFetch: null,
   });
 }
+
+const MARKET_CALENDAR_FETCH_FIXTURES = new Map<string, string>([
+  [
+    FEDERAL_RESERVE_FOMC_CALENDAR_URL,
+    `<h4>2026 FOMC Meetings</h4><p>July</p><p>28-29</p>`,
+  ],
+  [
+    BLS_RELEASE_ICS_URL,
+    `BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:cpi-runtime@bls.gov
+DTSTART;TZID=America/New_York:20260714T083000
+SUMMARY:Consumer Price Index for June 2026
+END:VEVENT
+END:VCALENDAR`,
+  ],
+  [
+    BEA_RELEASE_SCHEDULE_URL,
+    `<div>Year 2026</div><table><tr><td>July 30 8:30 AM</td><td>News</td><td>GDP (Advance Estimate), 2nd Quarter 2026</td></tr></table>`,
+  ],
+  [
+    KSD_RIGHTS_SCHEDULE_URL,
+    JSON.stringify({
+      response: {
+        header: { resultCode: "00", resultMsg: "NORMAL SERVICE." },
+        body: {
+          items: {
+            item: [
+              {
+                basDt: "20260722",
+                stckIssuCmpyNm: "삼성전자",
+                srtnCd: "005930",
+                righExerReasNm: "현금배당",
+                stckBasDt: "20260731",
+              },
+            ],
+          },
+          totalCount: 1,
+        },
+      },
+    }),
+  ],
+  [
+    KIND_LISTING_COMPANY_URL,
+    `<table>
+      <tr><th>회사명</th><th>상장일</th><th>상장유형</th><th>증권구분</th><th>업종</th><th>국적</th><th>상장주선인</th></tr>
+      <tr><td>매드업</td><td>2026-07-01</td><td>신규상장</td><td>주권</td><td>광고업</td><td>대한민국</td><td>미래에셋증권 주식회사</td></tr>
+    </table>`,
+  ],
+]);
+
+const calendarFixtureFetch: typeof fetch = async (input) => {
+  const url = String(input).split("?")[0] ?? String(input);
+  const text = MARKET_CALENDAR_FETCH_FIXTURES.get(url);
+  if (text === undefined) {
+    throw new Error(`Unexpected calendar fetch ${url}`);
+  }
+  return new Response(text, {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+};
 
 function restingBuy(
   submittedAt: string,
@@ -430,6 +498,80 @@ describe("Electron desktop runtime boundary", () => {
       expect(runtime.getBootstrap().market.instrumentId).toBe("KRX:005930");
     } finally {
       await runtime.close();
+    }
+  });
+
+  it("serves the market calendar through the desktop runtime boundary", async () => {
+    const userDataPath = mkdtempSync(join(tmpdir(), "desktop-calendar-"));
+    temporaryDirectories.push(userDataPath);
+    const runtime = createRuntime(userDataPath);
+    try {
+      const projection = await runtime.getMarketCalendar(true);
+      expect(projection).toMatchObject({
+        schemaVersion: 1,
+        state: "READY",
+        source: "FIXTURE",
+      });
+      expect(projection.events.length).toBeGreaterThan(0);
+      expect(
+        projection.events.some(
+          (event) =>
+            event.affectedMarkets.includes("KR") &&
+            event.affectedMarkets.includes("US"),
+        ),
+      ).toBe(true);
+      expect(
+        projection.events.some((event) =>
+          event.instrumentIds.includes("KRX:005930"),
+        ),
+      ).toBe(true);
+      expect(
+        projection.events.some((event) =>
+          event.instrumentIds.includes("NASDAQ:AAPL"),
+        ),
+      ).toBe(true);
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("ingests official calendar providers through the runtime boundary", async () => {
+    const userDataPath = mkdtempSync(join(tmpdir(), "desktop-calendar-live-"));
+    temporaryDirectories.push(userDataPath);
+    const previousPublicDataKey = process.env["DATA_GO_KR_SERVICE_KEY"];
+    process.env["DATA_GO_KR_SERVICE_KEY"] = "test-public-data-service-key-123456";
+    const runtime = new DesktopRuntime({
+      userDataPath,
+      emitMarket: () => undefined,
+      calendarFetch: calendarFixtureFetch,
+    });
+    try {
+      const projection = await runtime.getMarketCalendar(true);
+      expect(projection).toMatchObject({
+        schemaVersion: 1,
+        state: "READY",
+        source: "PROVIDER",
+      });
+      expect(projection.events.map((event) => event.provider)).toEqual(
+        expect.arrayContaining([
+          "US_FEDERAL_RESERVE",
+          "US_BLS",
+          "US_BEA",
+          "KIND_KRX",
+          "KSD_RIGHTS_SCHEDULE",
+        ]),
+      );
+      expect(projection.statusMessage).toContain("Federal Reserve FOMC");
+      expect(projection.statusMessage).toContain("BLS");
+      expect(projection.statusMessage).toContain("BEA");
+      expect(projection.statusMessage).toContain("KIND 상장일정");
+    } finally {
+      await runtime.close();
+      if (previousPublicDataKey === undefined) {
+        delete process.env["DATA_GO_KR_SERVICE_KEY"];
+      } else {
+        process.env["DATA_GO_KR_SERVICE_KEY"] = previousPublicDataKey;
+      }
     }
   });
 

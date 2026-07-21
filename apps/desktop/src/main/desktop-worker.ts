@@ -5,6 +5,7 @@ import type {
   DesktopMarketProjection,
   DesktopInformationFeedProjection,
   DesktopInstrumentSearchProjection,
+  DesktopMarketCalendarProjection,
   DesktopMarketContextProjection,
   DesktopPaperOrderRequest,
   DesktopPaperOrderResult,
@@ -55,6 +56,11 @@ type WorkerCommand =
     }
   | {
       readonly id: string;
+      readonly kind: "market-calendar-get";
+      readonly forceRefresh: unknown;
+    }
+  | {
+      readonly id: string;
       readonly kind: "paper-submit";
       readonly request: unknown;
     }
@@ -66,6 +72,7 @@ type WorkerResult =
   | DesktopMarketProjection
   | DesktopInformationFeedProjection
   | DesktopInstrumentSearchProjection
+  | DesktopMarketCalendarProjection
   | DesktopMarketContextProjection
   | DesktopPaperOrderResult
   | DesktopRankingProjection
@@ -91,6 +98,7 @@ function isWorkerCommand(value: unknown): value is WorkerCommand {
       "instrument-search",
       "information-get",
       "market-context-get",
+      "market-calendar-get",
       "paper-submit",
       "close",
     ].includes(record["kind"])
@@ -164,6 +172,9 @@ process.on("message", (value: unknown) => {
         break;
       case "market-context-get":
         result = await runtime.getMarketContext(value.forceRefresh === true);
+        break;
+      case "market-calendar-get":
+        result = await runtime.getMarketCalendar(value.forceRefresh === true);
         break;
       case "paper-submit":
         result = runtime.submitPaperOrder(

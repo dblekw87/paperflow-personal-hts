@@ -42,13 +42,13 @@ describe("local SQLite storage", () => {
       now: () => NOW,
     });
     try {
-      expect(opened.schemaVersion).toBe(8);
+      expect(opened.schemaVersion).toBe(9);
       expect(inspectDatabaseHealth(opened.database)).toEqual({
         healthy: true,
         code: "SQLITE_HEALTHY",
         message:
-          "SQLite integrity, foreign-key rows, migration checksums, immutable ledger triggers, busy timeout, and schema v8 are valid",
-        schemaVersion: 8,
+          "SQLite integrity, foreign-key rows, migration checksums, immutable ledger triggers, busy timeout, and schema v9 are valid",
+        schemaVersion: 9,
       });
     } finally {
       opened.database.close();
@@ -96,6 +96,7 @@ describe("local SQLite storage", () => {
         { version: 6, applied_at: NOW },
         { version: 7, applied_at: NOW },
         { version: 8, applied_at: NOW },
+        { version: 9, applied_at: NOW },
       ]);
     } finally {
       second.database.close();

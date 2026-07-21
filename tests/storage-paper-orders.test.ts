@@ -177,7 +177,7 @@ function buyCommit(clientOrderId = "buy-1") {
 }
 
 describe("local paper order SQLite persistence", () => {
-  it("keeps prior migrations unchanged and advances storage through v8", () => {
+  it("keeps prior migrations unchanged and advances storage through v9", () => {
     expect(MIGRATIONS.map(({ version, name }) => ({ version, name }))).toEqual([
       { version: 1, name: "initial_local_simulation_storage" },
       { version: 2, name: "local_paper_orders_and_fills" },
@@ -187,6 +187,7 @@ describe("local paper order SQLite persistence", () => {
       { version: 6, name: "last_real_domestic_orderbook_snapshots" },
       { version: 7, name: "last_real_domestic_venue_trade_snapshots" },
       { version: 8, name: "domestic_orderbook_snapshots_per_venue" },
+      { version: 9, name: "market_event_calendar" },
     ]);
     expect(MIGRATIONS[0]?.checksum).toBe(
       "1041d43b5988a0de504a65cdd79902f9607cc73dca102d81faac393fce07917d",
@@ -248,7 +249,7 @@ describe("local paper order SQLite persistence", () => {
 
     const second = openRepository(filename);
     try {
-      expect(second.schemaVersion).toBe(8);
+      expect(second.schemaVersion).toBe(9);
       expect(
         second.papers.getPaperOrder("paper-account", "buy-1")?.status,
       ).toBe("FILLED");

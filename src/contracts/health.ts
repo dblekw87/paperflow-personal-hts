@@ -32,6 +32,8 @@ export const HealthReportSchema = z.object({
     oilProxy: z.string(),
     probeSeconds: z.number(),
     hasOpenDartKey: z.boolean(),
+    hasPublicDataPortalKey: z.boolean(),
+    hasKrxOpenApiKey: z.boolean(),
     hasSecUserAgent: z.boolean(),
   }),
   checks: z.array(HealthCheckSchema),

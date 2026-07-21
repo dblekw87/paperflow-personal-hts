@@ -774,8 +774,8 @@ select:focus-visible {
 
 .pt-instrument-header {
   display: grid;
-  grid-template-columns: minmax(180px, 220px) 145px minmax(570px, 1fr) auto;
-  gap: 10px;
+  grid-template-columns: minmax(260px, 360px) 145px minmax(420px, 1fr) auto;
+  gap: 8px;
   align-items: center;
   min-height: 78px;
   padding: 12px 14px;
@@ -786,16 +786,28 @@ select:focus-visible {
 }
 
 .pt-instrument-header__identity {
+  min-width: 0;
   gap: 9px;
 }
 
 .pt-instrument-header__title {
+  min-width: 0;
   gap: 7px;
 }
 
 .pt-instrument-header h1 {
+  overflow: hidden;
+  min-width: 0;
+  max-width: 255px;
   margin: 0;
   font-size: 20px;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pt-instrument-header__title .pt-badge {
+  flex: 0 0 auto;
 }
 
 .pt-instrument-header__identity p {
@@ -815,8 +827,8 @@ select:focus-visible {
 
 .pt-instrument-header__metrics {
   display: grid;
-  grid-template-columns: repeat(6, minmax(76px, 1fr));
-  gap: 6px;
+  grid-template-columns: repeat(6, minmax(64px, 1fr));
+  gap: 5px;
 }
 
 .pt-instrument-header__metrics > * {
@@ -1531,6 +1543,653 @@ select:focus-visible {
 
 .pt-page-card__toolbar button {
   cursor: pointer;
+}
+
+.pt-page-card__toolbar input[type="month"] {
+  min-height: 36px;
+  padding: 0 12px;
+  color: var(--color-text-primary);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font: inherit;
+}
+
+.pt-calendar-page {
+  display: grid;
+  gap: 12px;
+}
+
+.pt-calendar-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pt-calendar-filters button {
+  min-height: 30px;
+  padding: 0 10px;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+}
+
+.pt-calendar-filters button.active {
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+  border-color: color-mix(in srgb, var(--color-accent) 35%, transparent);
+}
+
+.pt-calendar-layout {
+  display: grid;
+  grid-template-columns: minmax(620px, 1fr) minmax(330px, 420px);
+  gap: 12px;
+  align-items: start;
+}
+
+.pt-calendar-month {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(74px, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  background: var(--color-border-soft);
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+}
+
+.pt-calendar-weekday {
+  display: grid;
+  height: 32px;
+  place-items: center;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-elevated);
+  font-size: 12px;
+}
+
+.pt-calendar-weekday:first-child {
+  color: var(--color-positive);
+}
+
+.pt-calendar-day {
+  display: grid;
+  min-height: 82px;
+  align-content: start;
+  gap: 8px;
+  padding: 9px;
+  color: var(--color-text-primary);
+  text-align: left;
+  background: var(--color-bg-panel);
+  border: 0;
+}
+
+.pt-calendar-day:hover {
+  background: var(--color-bg-hover);
+}
+
+.pt-calendar-day[data-muted="true"] {
+  color: var(--color-text-tertiary);
+  background: color-mix(in srgb, var(--color-bg-panel) 70%, var(--color-bg-canvas));
+}
+
+.pt-calendar-day--selected {
+  outline: 2px solid color-mix(in srgb, var(--color-accent) 68%, transparent);
+  outline-offset: -2px;
+  background: var(--color-accent-soft);
+}
+
+.pt-calendar-day > span:first-child {
+  font: 700 13px var(--font-mono);
+}
+
+.pt-calendar-day__dots {
+  display: flex;
+  min-height: 8px;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.pt-calendar-day__dots i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-accent);
+}
+
+.pt-calendar-day__dots i[data-importance="critical"] {
+  background: var(--color-positive);
+}
+
+.pt-calendar-day__dots i[data-importance="high"] {
+  background: var(--color-warning);
+}
+
+.pt-calendar-day__dots i[data-importance="medium"] {
+  background: var(--color-accent);
+}
+
+.pt-calendar-day__dots i[data-importance="low"] {
+  background: var(--color-text-tertiary);
+}
+
+.pt-calendar-day__dots i[data-importance="loading"],
+.pt-calendar-day--loading > span:first-child,
+.pt-calendar-agenda__skeleton time,
+.pt-calendar-agenda__skeleton p span,
+.pt-calendar-agenda__skeleton strong,
+.pt-calendar-agenda__skeleton small,
+.pt-calendar-workspace-scope__skeleton time,
+.pt-calendar-workspace-scope__skeleton strong,
+.pt-calendar-workspace-scope__skeleton span {
+  overflow: hidden;
+  color: transparent;
+  background: linear-gradient(
+    90deg,
+    var(--color-bg-elevated),
+    color-mix(in srgb, var(--color-accent) 16%, var(--color-bg-elevated)),
+    var(--color-bg-elevated)
+  );
+  background-size: 220% 100%;
+  animation: pt-skeleton-shimmer 1.2s ease-in-out infinite;
+}
+
+.pt-calendar-day--loading > span:first-child {
+  width: 22px;
+  height: 14px;
+  border-radius: 4px;
+}
+
+.pt-calendar-day em {
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.pt-calendar-agenda {
+  display: grid;
+  gap: 8px;
+  max-height: calc(100vh - 290px);
+  overflow: auto;
+  padding: 12px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+}
+
+.pt-calendar-agenda > header,
+.pt-calendar-workspace-scope > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pt-calendar-agenda > header > div {
+  display: grid;
+  gap: 3px;
+}
+
+.pt-calendar-agenda > header span,
+.pt-calendar-workspace-scope header span {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.pt-calendar-agenda ol,
+.pt-calendar-workspace-scope ol {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pt-calendar-agenda li {
+  display: block;
+}
+
+.pt-calendar-agenda li > button {
+  display: grid;
+  width: 100%;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px;
+  color: inherit;
+  text-align: left;
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border-soft);
+  border-radius: 6px;
+}
+
+.pt-calendar-agenda__item--selected > button,
+.pt-calendar-workspace-scope__item--selected > button {
+  background: var(--color-accent-soft);
+  border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
+}
+
+.pt-calendar-agenda__skeleton time {
+  width: 34px;
+  height: 14px;
+  border-radius: 4px;
+}
+
+.pt-calendar-agenda__skeleton p span {
+  width: 52px;
+  height: 18px;
+}
+
+.pt-calendar-agenda__skeleton strong {
+  width: min(260px, 80%);
+  height: 18px;
+  border-radius: 4px;
+}
+
+.pt-calendar-agenda__skeleton small {
+  width: min(180px, 62%);
+  height: 14px;
+  border-radius: 4px;
+}
+
+.pt-calendar-workspace-scope__skeleton time,
+.pt-calendar-workspace-scope__skeleton strong,
+.pt-calendar-workspace-scope__skeleton span {
+  height: 14px;
+  border-radius: 4px;
+}
+
+.pt-calendar-workspace-scope__skeleton strong {
+  width: min(260px, 100%);
+}
+
+.pt-calendar-agenda time,
+.pt-calendar-workspace-scope time {
+  color: var(--color-accent);
+  font: 700 12px var(--font-mono);
+}
+
+.pt-calendar-agenda li > button > div {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.pt-calendar-agenda p,
+.pt-calendar-agenda strong,
+.pt-calendar-agenda small,
+.pt-calendar-agenda footer,
+.pt-calendar-workspace-scope p {
+  margin: 0;
+}
+
+.pt-calendar-agenda p,
+.pt-calendar-agenda footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.pt-calendar-agenda p span,
+.pt-calendar-agenda footer span,
+.pt-calendar-workspace-scope li span,
+.pt-calendar-detail footer span {
+  display: inline-flex;
+  min-height: 18px;
+  align-items: center;
+  padding: 1px 6px;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-canvas);
+  border: 1px solid var(--color-border-soft);
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.pt-calendar-agenda small {
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pt-calendar-workspace-scope {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+}
+
+.pt-calendar-workspace-scope li {
+  display: block;
+}
+
+.pt-calendar-workspace-scope li > button {
+  display: grid;
+  width: 100%;
+  grid-template-columns: 94px minmax(180px, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 8px;
+  color: inherit;
+  text-align: left;
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border-soft);
+  border-radius: 5px;
+}
+
+.pt-calendar-sources,
+.pt-calendar-detail {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+}
+
+.pt-calendar-sources > header,
+.pt-calendar-detail > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pt-calendar-sources header span,
+.pt-calendar-detail header span {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.pt-calendar-sources ul {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.pt-calendar-sources li {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  padding: 9px;
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border-soft);
+  border-radius: 6px;
+}
+
+.pt-calendar-sources li > span {
+  width: fit-content;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.pt-calendar-sources li > span[data-state="ready"] {
+  color: var(--color-success);
+  background: var(--color-success-soft);
+}
+
+.pt-calendar-sources li > span[data-state="unconfigured"],
+.pt-calendar-sources li > span[data-state="unsupported"] {
+  color: var(--color-text-secondary);
+  background: var(--color-bg-canvas);
+}
+
+.pt-calendar-sources li > span[data-state="error"] {
+  color: var(--color-negative);
+  background: var(--color-negative-soft);
+}
+
+.pt-calendar-sources small,
+.pt-calendar-sources em {
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pt-calendar-detail__body {
+  display: grid;
+  gap: 10px;
+}
+
+.pt-calendar-detail h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.pt-calendar-detail dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 8px 14px;
+  margin: 0;
+}
+
+.pt-calendar-detail dl > div {
+  min-width: 0;
+}
+
+.pt-calendar-detail dt {
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+.pt-calendar-detail dd {
+  margin: 3px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pt-calendar-detail footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.pt-calendar-sources__skeleton,
+.pt-calendar-detail__skeleton {
+  display: grid;
+  gap: 8px;
+}
+
+.pt-calendar-sources__skeleton {
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+}
+
+.pt-calendar-sources__skeleton span,
+.pt-calendar-detail__skeleton strong,
+.pt-calendar-detail__skeleton span {
+  height: 18px;
+  overflow: hidden;
+  color: transparent;
+  background: linear-gradient(
+    90deg,
+    var(--color-bg-elevated),
+    color-mix(in srgb, var(--color-accent) 16%, var(--color-bg-elevated)),
+    var(--color-bg-elevated)
+  );
+  background-size: 220% 100%;
+  border-radius: 4px;
+  animation: pt-skeleton-shimmer 1.2s ease-in-out infinite;
+}
+
+.pt-trading-skeleton {
+  display: grid;
+  gap: 12px;
+}
+
+.pt-trading-skeleton span,
+.pt-trading-skeleton i,
+.pt-trading-skeleton strong {
+  display: block;
+  overflow: hidden;
+  color: transparent;
+  background: linear-gradient(
+    90deg,
+    var(--color-bg-elevated),
+    color-mix(in srgb, var(--color-accent) 14%, var(--color-bg-elevated)),
+    var(--color-bg-elevated)
+  );
+  background-size: 220% 100%;
+  border-radius: 5px;
+  animation: pt-skeleton-shimmer 1.2s ease-in-out infinite;
+}
+
+.pt-trading-skeleton__strip,
+.pt-trading-skeleton__portfolio,
+.pt-trading-skeleton__header,
+.pt-trading-skeleton__book,
+.pt-trading-skeleton__chart,
+.pt-trading-skeleton__insights {
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+}
+
+.pt-trading-skeleton__strip {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  gap: 10px;
+  min-height: 76px;
+  padding: 12px;
+}
+
+.pt-trading-skeleton__strip span {
+  height: 48px;
+}
+
+.pt-trading-skeleton__header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 18px;
+  min-height: 118px;
+  padding: 18px;
+}
+
+.pt-trading-skeleton__header > div:first-child {
+  display: grid;
+  min-width: min(360px, 100%);
+  gap: 12px;
+}
+
+.pt-trading-skeleton__header > div:first-child span {
+  width: 110px;
+  height: 18px;
+}
+
+.pt-trading-skeleton__header > div:first-child strong {
+  width: min(320px, 100%);
+  height: 34px;
+}
+
+.pt-trading-skeleton__header > div:last-child {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(88px, 1fr));
+  gap: 8px;
+  width: min(440px, 48%);
+}
+
+.pt-trading-skeleton__header > div:last-child span {
+  height: 38px;
+}
+
+.pt-trading-skeleton__portfolio {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(130px, 1fr));
+  gap: 10px;
+  padding: 12px;
+}
+
+.pt-trading-skeleton__portfolio span {
+  height: 54px;
+}
+
+.pt-trading-skeleton__grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.74fr) minmax(520px, 1.36fr);
+  gap: 12px;
+}
+
+.pt-trading-skeleton__book {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  min-height: 620px;
+  padding: 14px;
+}
+
+.pt-trading-skeleton__book span {
+  height: 42px;
+}
+
+.pt-trading-skeleton__chart {
+  position: relative;
+  min-height: 620px;
+  padding: 16px;
+}
+
+.pt-trading-skeleton__chart span {
+  width: 190px;
+  height: 28px;
+}
+
+.pt-trading-skeleton__chart i {
+  position: absolute;
+  right: 24px;
+  left: 24px;
+  height: 1px;
+  opacity: 0.8;
+}
+
+.pt-trading-skeleton__chart i:nth-of-type(1) {
+  top: 30%;
+}
+
+.pt-trading-skeleton__chart i:nth-of-type(2) {
+  top: 52%;
+}
+
+.pt-trading-skeleton__chart i:nth-of-type(3) {
+  top: 74%;
+}
+
+.pt-trading-skeleton__chart strong {
+  position: absolute;
+  bottom: 18px;
+  left: 18px;
+  width: min(360px, calc(100% - 36px));
+  height: 22px;
+  color: transparent;
+}
+
+.pt-trading-skeleton__insights {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 10px;
+  padding: 12px;
+}
+
+.pt-trading-skeleton__insights span {
+  height: 126px;
+}
+
+@keyframes pt-skeleton-shimmer {
+  0% {
+    background-position: 120% 0;
+  }
+
+  100% {
+    background-position: -120% 0;
+  }
 }
 
 .pt-ranking-table-wrap {
@@ -2644,8 +3303,16 @@ select:focus-visible {
     grid-template-columns: minmax(430px, 1.2fr) minmax(488px, 1fr);
   }
 
+  .pt-trading-skeleton__strip {
+    grid-template-columns: repeat(3, minmax(120px, 1fr));
+  }
+
+  .pt-trading-skeleton__grid {
+    grid-template-columns: minmax(430px, 1.2fr) minmax(488px, 1fr);
+  }
+
   .pt-instrument-header {
-    grid-template-columns: 180px 135px minmax(570px, 1fr);
+    grid-template-columns: minmax(260px, 340px) 135px minmax(390px, 1fr);
     gap: 8px;
   }
 
@@ -2660,5 +3327,6 @@ select:focus-visible {
   *::after {
     scroll-behavior: auto !important;
     transition: none !important;
+    animation: none !important;
   }
 }

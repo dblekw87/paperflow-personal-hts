@@ -371,6 +371,7 @@ function registerDesktopIpc(runtime: DesktopRuntimeClient): void {
     DESKTOP_CHANNELS.investorFlowGet,
     DESKTOP_CHANNELS.instrumentSearch,
     DESKTOP_CHANNELS.marketContextGet,
+    DESKTOP_CHANNELS.marketCalendarGet,
     DESKTOP_CHANNELS.informationGet,
     DESKTOP_CHANNELS.informationOpenExternal,
     DESKTOP_CHANNELS.paperSubmit,
@@ -511,6 +512,18 @@ function registerDesktopIpc(runtime: DesktopRuntimeClient): void {
         throw new Error("Invalid market-context refresh request.");
       }
       return runtime.getMarketContext(forceRefresh);
+    },
+  );
+  ipcMain.handle(
+    DESKTOP_CHANNELS.marketCalendarGet,
+    async (event, forceRefresh: unknown) => {
+      if (!isTrustedIpcSender(event)) {
+        throw new Error("Untrusted renderer frame.");
+      }
+      if (typeof forceRefresh !== "boolean") {
+        throw new Error("Invalid market-calendar refresh request.");
+      }
+      return runtime.getMarketCalendar(forceRefresh);
     },
   );
   ipcMain.handle(

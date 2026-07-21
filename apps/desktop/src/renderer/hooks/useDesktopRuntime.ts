@@ -9,6 +9,7 @@ import type {
   DesktopInformationFeedProjection,
   DesktopInstrumentSearchProjection,
   DesktopInvestorFlowProjection,
+  DesktopMarketCalendarProjection,
   DesktopMarketContextProjection,
   DesktopPaperOrderRequest,
   DesktopPaperOrderResult,
@@ -25,6 +26,7 @@ export interface DesktopRuntimeState {
   readonly error: string | null;
   readonly ranking: DesktopRankingProjection | null;
   readonly informationFeed: DesktopInformationFeedProjection | null;
+  readonly marketCalendar: DesktopMarketCalendarProjection | null;
   readonly marketContext: DesktopMarketContextProjection | null;
   readonly investorFlow: DesktopInvestorFlowProjection | null;
   readonly instrumentSearch: DesktopInstrumentSearchProjection | null;
@@ -51,6 +53,9 @@ export interface DesktopRuntimeState {
   readonly loadInformationFeed: (
     forceRefresh?: boolean,
   ) => Promise<DesktopInformationFeedProjection | null>;
+  readonly loadMarketCalendar: (
+    forceRefresh?: boolean,
+  ) => Promise<DesktopMarketCalendarProjection | null>;
   readonly loadMarketContext: (
     forceRefresh?: boolean,
   ) => Promise<DesktopMarketContextProjection | null>;
@@ -67,6 +72,8 @@ export function useDesktopRuntime(): DesktopRuntimeState {
     useState<DesktopRankingProjection | null>(null);
   const [informationFeed, setInformationFeed] =
     useState<DesktopInformationFeedProjection | null>(null);
+  const [marketCalendar, setMarketCalendar] =
+    useState<DesktopMarketCalendarProjection | null>(null);
   const [marketContext, setMarketContext] =
     useState<DesktopMarketContextProjection | null>(null);
   const [investorFlow, setInvestorFlow] =
@@ -78,6 +85,7 @@ export function useDesktopRuntime(): DesktopRuntimeState {
   const instrumentSelectionSequence = useRef(0);
   const rankingRequestSequence = useRef(0);
   const marketContextRequestSequence = useRef(0);
+  const marketCalendarRequestSequence = useRef(0);
   const investorFlowRequestSequence = useRef(0);
   const instrumentSearchSequence = useRef(0);
 
@@ -376,6 +384,48 @@ export function useDesktopRuntime(): DesktopRuntimeState {
     [],
   );
 
+  const loadMarketCalendar = useCallback(
+    async (
+      forceRefresh = false,
+    ): Promise<DesktopMarketCalendarProjection | null> => {
+      const api = window.paperTradingDesktop;
+      if (!api) return null;
+      const requestSequence = ++marketCalendarRequestSequence.current;
+      setMarketCalendar((current) => ({
+        schemaVersion: 1,
+        state: "LOADING",
+        events: current?.events ?? [],
+        sources: current?.sources ?? [],
+        fetchedAt: current?.fetchedAt ?? null,
+        source: current?.source ?? "FIXTURE",
+        statusMessage: "국내·미국 시장 이벤트 캘린더를 갱신하는 중입니다.",
+      }));
+      try {
+        const projection = await api.marketCalendar.get(forceRefresh);
+        if (requestSequence !== marketCalendarRequestSequence.current) {
+          return null;
+        }
+        setMarketCalendar(projection);
+        setError(projection.state === "ERROR" ? projection.statusMessage : null);
+        return projection;
+      } catch {
+        if (requestSequence === marketCalendarRequestSequence.current) {
+          setMarketCalendar((current) => ({
+            schemaVersion: 1,
+            state: "ERROR",
+            events: current?.events ?? [],
+            sources: current?.sources ?? [],
+            fetchedAt: current?.fetchedAt ?? null,
+            source: current?.source ?? "FIXTURE",
+            statusMessage: "시장 이벤트 캘린더 projection을 불러오지 못했습니다.",
+          }));
+        }
+        return null;
+      }
+    },
+    [],
+  );
+
   const selectInstrument = useCallback(
     async (symbol: string): Promise<DesktopMarketProjection | null> => {
       const api = window.paperTradingDesktop;
@@ -488,6 +538,7 @@ export function useDesktopRuntime(): DesktopRuntimeState {
     error,
     ranking,
     informationFeed,
+    marketCalendar,
     marketContext,
     investorFlow,
     instrumentSearch,
@@ -497,6 +548,7 @@ export function useDesktopRuntime(): DesktopRuntimeState {
     searchDomesticInstruments,
     searchUsInstruments,
     loadInformationFeed,
+    loadMarketCalendar,
     loadMarketContext,
     loadInvestorFlow,
     submitPaperOrder,

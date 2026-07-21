@@ -163,6 +163,18 @@
 - 사건 전후 KOSPI·KOSDAQ, USD/KRW, QQQ·USO proxy, 관련 미국 종목과 국내 업종의 가격·거래량·거래대금 반응을 비교한다.
 - 경제적 전달 경로, 실제 반응, 대안 가설·반대 근거, freshness와 confidence를 분리하며 상관관계를 확정 인과로 표현하지 않는다.
 
+### FR-07D 국내·미국 시장 이벤트 캘린더
+
+- 실적 발표, 배당, ex-dividend, 유상증자, 무상증자, 액면분할·병합, 자사주, M&A, IPO, lock-up 해제, 거래정지·규제 이벤트를 국내·미국 공통 캘린더 이벤트로 정규화한다.
+- FOMC, CPI, PPI, PCE, GDP, 고용, PMI, 금리결정, 옵션만기, 선물만기, MSCI·Russell·ETF 리밸런싱과 주요 경제지표를 같은 캘린더에 표시한다.
+- 전체 캘린더 페이지는 국내·미국·글로벌 이벤트를 모두 보여주고, 날짜 선택 시 해당 날짜의 이벤트를 발표 시각 순서로 정리한다.
+- 종목 workspace에서는 선택 종목의 시장에 맞는 이벤트를 우선 표시한다. 국내 종목은 국내 및 글로벌 이벤트, 미국 종목은 미국 및 글로벌 이벤트를 표시한다.
+- 직접 관련 종목 이벤트는 `instrumentIds`, 시장 전체 이벤트는 `affectedMarkets`로 필터링한다.
+- 이벤트에는 provider, sourceEventId, evidence ID, 공개·수신·감지 시각, timezone, data quality를 포함한다.
+- `HEADLINE_ONLY`, `DELAYED`, `STALE`, `UNSUPPORTED` 상태를 숨기지 않고 UI와 도메인에 전파한다.
+- actual/consensus/prior/revision은 exact decimal string으로 저장하며, consensus 권리가 없으면 surprise를 계산하지 않는다.
+- 자세한 계약과 provider 범위는 `docs/21-market-event-calendar.md`를 따른다.
+
 ### FR-08 모의 주문
 
 - 주문 방향: 매수/매도

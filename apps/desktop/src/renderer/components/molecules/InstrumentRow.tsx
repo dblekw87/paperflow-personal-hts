@@ -34,11 +34,16 @@ export function InstrumentRow({ item, onSelect }: InstrumentRowProps) {
         </span>
       </span>
       <span className="pt-instrument-row__price">
-        <PriceText value={item.price} direction={item.direction} />
+        <PriceText
+          value={item.price}
+          direction={item.direction}
+          hideDirectionIcon
+        />
         <PriceText
           value={item.changeRate}
           direction={item.direction}
           suffix="%"
+          hideDirectionIcon
         />
       </span>
       {item.turnover ? (

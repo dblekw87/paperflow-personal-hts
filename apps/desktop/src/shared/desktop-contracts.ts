@@ -1,4 +1,30 @@
+import {
+  MarketCalendarEventSchema,
+  type MarketCalendarEvent,
+} from "../../../../src/contracts/market-calendar.js";
+
 export type DesktopMarketMode = "FIXTURE" | "KIS_READ_ONLY";
+
+export interface DesktopMarketCalendarProjection {
+  readonly schemaVersion: 1;
+  readonly state: "LOADING" | "READY" | "PARTIAL" | "ERROR";
+  readonly events: readonly MarketCalendarEvent[];
+  readonly sources: readonly DesktopMarketCalendarSourceProjection[];
+  readonly fetchedAt: string | null;
+  readonly source: "FIXTURE" | "PROVIDER";
+  readonly statusMessage: string;
+}
+
+export interface DesktopMarketCalendarSourceProjection {
+  readonly provider: MarketCalendarEvent["provider"];
+  readonly state: "READY" | "UNCONFIGURED" | "UNSUPPORTED" | "ERROR";
+  readonly itemCount: number;
+  readonly insertedCount: number;
+  readonly dataQuality: MarketCalendarEvent["dataQuality"] | null;
+  readonly fetchedAt: string | null;
+  readonly message: string;
+}
+
 export type DesktopConnectionState =
   "DISABLED" | "CONNECTING" | "LIVE" | "STALE" | "OFFLINE" | "ERROR";
 export type DesktopFreshness = "live" | "delayed" | "stale" | "offline";
@@ -437,6 +463,7 @@ export const DESKTOP_CHANNELS = Object.freeze({
   investorFlowGet: "papertrading:investor-flow:get",
   instrumentSearch: "papertrading:instrument:search",
   marketContextGet: "papertrading:market-context:get",
+  marketCalendarGet: "papertrading:market-calendar:get",
   informationGet: "papertrading:information:get",
   informationOpenExternal: "papertrading:information:open-external",
   paperSubmit: "papertrading:paper:submit",
@@ -984,6 +1011,91 @@ export function isDesktopMarketContextProjection(
     ids.add(id);
   }
   return true;
+}
+
+export function isDesktopMarketCalendarProjection(
+  value: unknown,
+): value is DesktopMarketCalendarProjection {
+  if (
+    !isRecord(value) ||
+    value["schemaVersion"] !== 1 ||
+    !["LOADING", "READY", "PARTIAL", "ERROR"].includes(
+      String(value["state"]),
+    ) ||
+    !Array.isArray(value["events"]) ||
+    value["events"].length > 1_000 ||
+    !Array.isArray(value["sources"]) ||
+    value["sources"].length > 24 ||
+    (value["fetchedAt"] !== null && !isIsoInstant(value["fetchedAt"])) ||
+    !["FIXTURE", "PROVIDER"].includes(String(value["source"])) ||
+    typeof value["statusMessage"] !== "string"
+  ) {
+    return false;
+  }
+  const providers = [
+    "OPEN_DART",
+    "KIND_KRX",
+    "KSD_RIGHTS_SCHEDULE",
+    "KIS_NEWS_HEADLINE",
+    "SEC_EDGAR",
+    "NASDAQ_DAILY_LIST",
+    "NYSE_CORPORATE_ACTIONS",
+    "NASDAQ_TRADER",
+    "US_FEDERAL_RESERVE",
+    "US_BLS",
+    "US_BEA",
+    "US_EIA",
+    "US_TREASURY",
+    "BOK_ECOS",
+    "KOSIS",
+    "KOREA_MOEF",
+    "KRX_DERIVATIVES",
+    "CBOE",
+    "CME",
+    "MSCI",
+    "FTSE_RUSSELL",
+    "ETF_ISSUER",
+    "ALPHA_VANTAGE",
+    "FINANCIAL_MODELING_PREP",
+    "FINNHUB",
+    "LICENSED_CORPORATE_EVENTS",
+    "OTHER_OFFICIAL",
+    "OTHER_LICENSED",
+  ];
+  const dataQualities = [
+    "OFFICIAL",
+    "REGULATOR_EXCHANGE",
+    "ISSUER_PRIMARY",
+    "LICENSED",
+    "AGGREGATED",
+    "HEADLINE_ONLY",
+    "DELAYED",
+    "STALE",
+    "UNSUPPORTED",
+  ];
+  return (
+    value["events"].every((event) => {
+      const parsed = MarketCalendarEventSchema.safeParse(event);
+      return parsed.success;
+    }) &&
+    value["sources"].every(
+      (source) =>
+        isRecord(source) &&
+        providers.includes(String(source["provider"])) &&
+        ["READY", "UNCONFIGURED", "UNSUPPORTED", "ERROR"].includes(
+          String(source["state"]),
+        ) &&
+        Number.isInteger(source["itemCount"]) &&
+        Number(source["itemCount"]) >= 0 &&
+        Number.isInteger(source["insertedCount"]) &&
+        Number(source["insertedCount"]) >= 0 &&
+        Number(source["insertedCount"]) <= Number(source["itemCount"]) &&
+        (source["dataQuality"] === null ||
+          dataQualities.includes(String(source["dataQuality"]))) &&
+        (source["fetchedAt"] === null || isIsoInstant(source["fetchedAt"])) &&
+        typeof source["message"] === "string",
+    )
+  );
 }
 
 export function isDesktopInformationFeedProjection(

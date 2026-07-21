@@ -6,6 +6,7 @@ import {
   isDesktopChartProjection,
   isDesktopInformationFeedProjection,
   isDesktopInstrumentSearchProjection,
+  isDesktopMarketCalendarProjection,
   isDesktopMarketContextProjection,
   isDesktopRankingProjection,
   isDesktopInvestorFlowProjection,
@@ -17,6 +18,7 @@ import {
   type DesktopMarketProjection,
   type DesktopInformationFeedProjection,
   type DesktopInstrumentSearchProjection,
+  type DesktopMarketCalendarProjection,
   type DesktopMarketContextProjection,
   type DesktopPaperOrderResult,
   type DesktopRankingProjection,
@@ -316,6 +318,24 @@ export class DesktopRuntimeClient {
     if (!isDesktopMarketContextProjection(projection)) {
       throw new Error(
         "Desktop worker returned an invalid market-context projection",
+      );
+    }
+    return projection;
+  }
+
+  public async getMarketCalendar(
+    forceRefresh = false,
+  ): Promise<DesktopMarketCalendarProjection> {
+    const projection = await this.#request<unknown>(
+      {
+        kind: "market-calendar-get",
+        forceRefresh,
+      },
+      15_000,
+    );
+    if (!isDesktopMarketCalendarProjection(projection)) {
+      throw new Error(
+        "Desktop worker returned an invalid market-calendar projection",
       );
     }
     return projection;

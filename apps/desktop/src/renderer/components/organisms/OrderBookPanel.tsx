@@ -236,7 +236,11 @@ function LevelRows({
         </td>
       ) : null}
       <td className="pt-order-book__price">
-        <PriceText value={isUsPriceDisplay ? truncateUsPrice(level.price) : level.price} direction={level.direction} />{" "}
+        <PriceText
+          value={isUsPriceDisplay ? truncateUsPrice(level.price) : level.price}
+          direction={level.direction}
+          hideDirectionIcon
+        />{" "}
         <span className={`pt-order-book__rate ${level.direction}`}>
           ({level.changeRate === "—" ? "—" : `${level.changeRate}%`})
         </span>
@@ -335,6 +339,7 @@ export function OrderBookPanel({
             value={currentPrice}
             direction={currentDirection}
             emphasis="strong"
+            hideDirectionIcon
           />
         </span>
         <label className="pt-order-book__direct-quantity">

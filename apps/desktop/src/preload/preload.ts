@@ -5,6 +5,7 @@ import {
   isDesktopChartProjection,
   isDesktopInformationFeedProjection,
   isDesktopInstrumentSearchProjection,
+  isDesktopMarketCalendarProjection,
   isDesktopMarketContextProjection,
   isAllowedExternalInformationUrl,
   isDesktopRankingProjection,
@@ -19,6 +20,7 @@ import {
   type DesktopMarketProjection,
   type DesktopInformationFeedProjection,
   type DesktopInstrumentSearchProjection,
+  type DesktopMarketCalendarProjection,
   type DesktopMarketContextProjection,
   type DesktopPaperOrderRequest,
   type DesktopPaperOrderResult,
@@ -456,6 +458,20 @@ const desktopApi = Object.freeze({
       );
       if (!isDesktopMarketContextProjection(result)) {
         throw new Error("Invalid market-context projection.");
+      }
+      return Object.freeze(result);
+    },
+  }),
+  marketCalendar: Object.freeze({
+    get: async (
+      forceRefresh = false,
+    ): Promise<Readonly<DesktopMarketCalendarProjection>> => {
+      const result: unknown = await ipcRenderer.invoke(
+        DESKTOP_CHANNELS.marketCalendarGet,
+        forceRefresh,
+      );
+      if (!isDesktopMarketCalendarProjection(result)) {
+        throw new Error("Invalid market-calendar projection.");
       }
       return Object.freeze(result);
     },

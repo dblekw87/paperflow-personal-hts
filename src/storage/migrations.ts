@@ -505,6 +505,67 @@ CREATE INDEX domestic_orderbook_snapshots_captured_idx
   ON domestic_orderbook_snapshots(captured_at DESC, instrument_id, venue);
 `;
 
+const MARKET_CALENDAR_SCHEMA_SQL = `
+CREATE TABLE market_calendar_events (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  market_scope TEXT NOT NULL CHECK(market_scope IN ('KR', 'US', 'GLOBAL')),
+  affected_markets_json TEXT NOT NULL CHECK(json_valid(affected_markets_json)),
+  instrument_ids_json TEXT NOT NULL CHECK(json_valid(instrument_ids_json)),
+  title_ko TEXT NOT NULL,
+  title_original TEXT,
+  scheduled_at TEXT NOT NULL,
+  local_date TEXT NOT NULL CHECK(
+    local_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+  ),
+  timezone TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN (
+    'SCHEDULED',
+    'CONFIRMED',
+    'REPORTED',
+    'UPDATED',
+    'CANCELLED',
+    'TENTATIVE'
+  )),
+  importance TEXT NOT NULL CHECK(importance IN (
+    'LOW',
+    'MEDIUM',
+    'HIGH',
+    'CRITICAL'
+  )),
+  provider TEXT NOT NULL,
+  source_event_id TEXT NOT NULL,
+  source_url TEXT,
+  data_quality TEXT NOT NULL,
+  metrics_json TEXT NOT NULL CHECK(json_valid(metrics_json)),
+  evidence_ids_json TEXT NOT NULL CHECK(json_valid(evidence_ids_json)),
+  supersedes_event_id TEXT,
+  detected_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  payload_version INTEGER NOT NULL CHECK(payload_version > 0),
+  payload_json TEXT NOT NULL CHECK(json_valid(payload_json)),
+  created_at TEXT NOT NULL,
+  UNIQUE(provider, source_event_id)
+) STRICT;
+
+CREATE INDEX market_calendar_events_local_date_idx
+  ON market_calendar_events(local_date, scheduled_at, id);
+CREATE INDEX market_calendar_events_market_scope_idx
+  ON market_calendar_events(market_scope, local_date, scheduled_at, id);
+
+CREATE TRIGGER market_calendar_events_immutable_update
+BEFORE UPDATE ON market_calendar_events
+BEGIN
+  SELECT RAISE(ABORT, 'market_calendar_events is immutable');
+END;
+
+CREATE TRIGGER market_calendar_events_immutable_delete
+BEFORE DELETE ON market_calendar_events
+BEGIN
+  SELECT RAISE(ABORT, 'market_calendar_events is immutable');
+END;
+`;
+
 function defineMigration(
   version: number,
   name: string,
@@ -550,6 +611,11 @@ export const MIGRATIONS: readonly Migration[] = [
     8,
     "domestic_orderbook_snapshots_per_venue",
     DOMESTIC_ORDERBOOK_VENUE_SCHEMA_SQL,
+  ),
+  defineMigration(
+    9,
+    "market_event_calendar",
+    MARKET_CALENDAR_SCHEMA_SQL,
   ),
 ];
 

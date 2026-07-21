@@ -8,6 +8,7 @@ export interface MetricProps {
   subValue?: string;
   quality?: "live" | "delayed" | "stale" | "closed";
   compact?: boolean;
+  hideDirectionIcon?: boolean;
 }
 
 const qualityLabel = {
@@ -24,12 +25,18 @@ export function Metric({
   subValue,
   quality,
   compact = false,
+  hideDirectionIcon = true,
 }: MetricProps) {
   return (
     <dl className={`pt-metric${compact ? " pt-metric--compact" : ""}`}>
       <dt>{label}</dt>
       <dd>
-        <PriceText value={value} direction={direction} emphasis="strong" />
+        <PriceText
+          value={value}
+          direction={direction}
+          emphasis="strong"
+          hideDirectionIcon={hideDirectionIcon}
+        />
         {subValue ? <small>{subValue}</small> : null}
         {quality ? (
           <Badge
