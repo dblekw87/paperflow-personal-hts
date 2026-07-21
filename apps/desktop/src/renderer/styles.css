@@ -881,13 +881,20 @@ select:focus-visible {
 
 .trading-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(500px, 1fr));
+  grid-template-columns: minmax(620px, 1.65fr) minmax(500px, 0.95fr);
+  grid-template-areas: "chart orderbook";
   gap: 8px;
   align-items: stretch;
 }
 
-.trading-grid > .market-chart { order: 1; }
-.trading-grid > .pt-order-book { order: 2; }
+.trading-grid > .market-chart {
+  grid-area: chart;
+  order: 1;
+}
+.trading-grid > .pt-order-book {
+  grid-area: orderbook;
+  order: 2;
+}
 
 .trading-grid > .market-chart,
 .trading-grid > .pt-order-book {
@@ -2320,7 +2327,7 @@ select:focus-visible {
   }
 
   .trading-grid {
-    grid-template-columns: repeat(2, minmax(488px, 1fr));
+    grid-template-columns: minmax(430px, 1.2fr) minmax(488px, 1fr);
   }
 
   .pt-instrument-header {
