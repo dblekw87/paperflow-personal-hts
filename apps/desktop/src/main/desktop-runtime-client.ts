@@ -10,6 +10,7 @@ import {
   isDesktopMarketContextProjection,
   isDesktopRankingProjection,
   isDesktopInvestorFlowProjection,
+  isDesktopShortSellingProjection,
   type DesktopAccountProjection,
   type DesktopBootstrapProjection,
   type DesktopChartInterval,
@@ -24,6 +25,7 @@ import {
   type DesktopRankingProjection,
   type DesktopRankingSort,
   type DesktopInvestorFlowProjection,
+  type DesktopShortSellingProjection,
 } from "../shared/desktop-contracts.js";
 
 interface PendingRequest {
@@ -252,6 +254,17 @@ export class DesktopRuntimeClient {
     );
     if (!isDesktopInvestorFlowProjection(projection)) {
       throw new Error("Desktop worker returned an invalid investor-flow projection");
+    }
+    return projection;
+  }
+
+  public async getShortSelling(): Promise<DesktopShortSellingProjection> {
+    const projection = await this.#request<unknown>(
+      { kind: "short-selling-get" },
+      30_000,
+    );
+    if (!isDesktopShortSellingProjection(projection)) {
+      throw new Error("Desktop worker returned an invalid short-selling projection");
     }
     return projection;
   }

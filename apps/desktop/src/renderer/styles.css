@@ -3074,6 +3074,29 @@ select:focus-visible {
   margin-top: 8px;
 }
 
+.pt-short-selling__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pt-short-selling__actions button {
+  height: 28px;
+  padding: 0 10px;
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 700;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.pt-short-selling__actions button:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
 .pt-short-selling__context {
   display: flex;
   min-height: 44px;

@@ -266,6 +266,39 @@ export interface DesktopInvestorFlowProjection {
   readonly statusMessage: string;
 }
 
+export interface DesktopShortSellingProjection {
+  readonly schemaVersion: 1;
+  readonly state:
+    | "LOADING"
+    | "READY"
+    | "PARTIAL"
+    | "UNAVAILABLE"
+    | "ERROR";
+  readonly source: "KRX_DATA_PRODUCT" | "UNSUPPORTED";
+  readonly instrumentId: string;
+  readonly symbol: string;
+  readonly marketScope: "KR" | "US";
+  readonly fetchedAt: string | null;
+  readonly trade: {
+    readonly businessDate: string;
+    readonly shortSellVolume: string;
+    readonly shortSellTurnover: string;
+    readonly shortSellRatio: string;
+  } | null;
+  readonly balance: {
+    readonly businessDate: string;
+    readonly shortBalanceQuantity: string;
+    readonly shortBalanceTurnover: string;
+    readonly shortBalanceRatio: string;
+  } | null;
+  readonly lendingBalance: {
+    readonly businessDate: string;
+    readonly balanceQuantity: string;
+    readonly balanceTurnover: string;
+  } | null;
+  readonly statusMessage: string;
+}
+
 export interface DesktopInstrumentSearchItemProjection {
   readonly instrumentId: string;
   readonly symbol: string;
@@ -461,6 +494,7 @@ export const DESKTOP_CHANNELS = Object.freeze({
   chartProjection: "papertrading:chart:projection",
   rankingGet: "papertrading:ranking:get",
   investorFlowGet: "papertrading:investor-flow:get",
+  shortSellingGet: "papertrading:short-selling:get",
   instrumentSearch: "papertrading:instrument:search",
   marketContextGet: "papertrading:market-context:get",
   marketCalendarGet: "papertrading:market-calendar:get",
@@ -846,6 +880,79 @@ export function isDesktopInvestorFlowProjection(
     value["state"] === "UNAVAILABLE" &&
     (instrument !== null || value["markets"].length !== 0 ||
       value["fetchedAt"] !== null)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function isShortSellingTrade(value: unknown): value is NonNullable<DesktopShortSellingProjection["trade"]> {
+  return (
+    isRecord(value) &&
+    isCalendarDate(value["businessDate"]) &&
+    isUnsignedInteger(value["shortSellVolume"]) &&
+    isUnsignedInteger(value["shortSellTurnover"]) &&
+    isUnsignedDecimal(value["shortSellRatio"])
+  );
+}
+
+function isShortSellingBalance(value: unknown): value is NonNullable<DesktopShortSellingProjection["balance"]> {
+  return (
+    isRecord(value) &&
+    isCalendarDate(value["businessDate"]) &&
+    isUnsignedInteger(value["shortBalanceQuantity"]) &&
+    isUnsignedInteger(value["shortBalanceTurnover"]) &&
+    isUnsignedDecimal(value["shortBalanceRatio"])
+  );
+}
+
+function isLendingBalance(value: unknown): value is NonNullable<DesktopShortSellingProjection["lendingBalance"]> {
+  return (
+    isRecord(value) &&
+    isCalendarDate(value["businessDate"]) &&
+    isUnsignedInteger(value["balanceQuantity"]) &&
+    isUnsignedInteger(value["balanceTurnover"])
+  );
+}
+
+export function isDesktopShortSellingProjection(
+  value: unknown,
+): value is DesktopShortSellingProjection {
+  if (
+    !isRecord(value) ||
+    value["schemaVersion"] !== 1 ||
+    !["LOADING", "READY", "PARTIAL", "UNAVAILABLE", "ERROR"].includes(
+      String(value["state"]),
+    ) ||
+    !["KRX_DATA_PRODUCT", "UNSUPPORTED"].includes(String(value["source"])) ||
+    typeof value["instrumentId"] !== "string" ||
+    typeof value["symbol"] !== "string" ||
+    !["KR", "US"].includes(String(value["marketScope"])) ||
+    (value["fetchedAt"] !== null && !isIsoInstant(value["fetchedAt"])) ||
+    typeof value["statusMessage"] !== "string"
+  ) {
+    return false;
+  }
+  if (
+    value["marketScope"] === "KR" &&
+    (value["instrumentId"] !== `KRX:${String(value["symbol"])}` ||
+      !/^[0-9A-Z]{6,7}$/.test(String(value["symbol"])))
+  ) {
+    return false;
+  }
+  const trade = value["trade"];
+  const balance = value["balance"];
+  const lendingBalance = value["lendingBalance"];
+  if (trade !== null && !isShortSellingTrade(trade)) return false;
+  if (balance !== null && !isShortSellingBalance(balance)) return false;
+  if (lendingBalance !== null && !isLendingBalance(lendingBalance)) return false;
+  const hasData = trade !== null || balance !== null || lendingBalance !== null;
+  if (hasData && !isIsoInstant(value["fetchedAt"])) return false;
+  if (value["state"] === "READY" && trade === null) return false;
+  if (value["state"] === "PARTIAL" && !hasData) return false;
+  if (
+    value["state"] === "UNAVAILABLE" &&
+    (hasData || value["fetchedAt"] !== null || value["source"] !== "UNSUPPORTED")
   ) {
     return false;
   }

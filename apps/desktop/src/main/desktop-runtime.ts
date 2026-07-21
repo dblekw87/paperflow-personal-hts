@@ -78,6 +78,7 @@ import { KisDomesticInvestorFlowClient } from "../../../../src/kis/domestic-inve
 import { KrxOpenApiClient } from "../../../../src/krx/openapi-client.js";
 import { KrxDailyStockTradeClient } from "../../../../src/krx/daily-stock-trade.js";
 import { KrxInvestorFlowClient } from "../../../../src/krx/investor-flow.js";
+import { KrxShortSellingClient } from "../../../../src/krx/short-selling.js";
 import { DomesticKisLiveStream } from "../../../../src/kis/ws/live-stream.js";
 import { domesticSessionFromProviderTime } from "../../../../src/kis/ws/normalize.js";
 import type { MarketLiveProjection } from "../../../../src/contracts/market-live-projection.js";
@@ -120,6 +121,7 @@ import type {
   DesktopPaperOrderResult,
   DesktopRankingProjection,
   DesktopRankingSort,
+  DesktopShortSellingProjection,
 } from "../shared/desktop-contracts.js";
 import { averagePaperPositionPrice } from "../shared/paper-valuation.js";
 
@@ -501,6 +503,12 @@ function koreanDateOffset(providerDate: string, days: number): string {
   );
   cursor.setUTCDate(cursor.getUTCDate() + days);
   return cursor.toISOString().slice(0, 10).replaceAll("-", "");
+}
+
+function calendarDate(value: string): string {
+  return /^\d{8}$/.test(value)
+    ? `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`
+    : value;
 }
 
 function openDartDateInstant(providerDate: string): string {
@@ -1509,6 +1517,65 @@ export class DesktopRuntime {
       };
     } catch (error) {
       return { ...unavailable(safeStatusMessage(error)), state: "ERROR", fetchedAt };
+    }
+  }
+
+  public async getShortSelling(): Promise<DesktopShortSellingProjection> {
+    const symbol = this.#symbol;
+    const instrumentId = this.#market.instrumentId;
+    const marketScope = this.#usExchange === null ? "KR" : "US";
+    const unsupported = (message: string): DesktopShortSellingProjection => ({
+      schemaVersion: 1,
+      state: "UNAVAILABLE",
+      source: "UNSUPPORTED",
+      instrumentId,
+      symbol,
+      marketScope,
+      fetchedAt: null,
+      trade: null,
+      balance: null,
+      lendingBalance: null,
+      statusMessage: message,
+    });
+    if (marketScope !== "KR") {
+      return unsupported(
+        "미국 short interest/short-sale volume provider가 연결되기 전까지 수치를 표시하지 않습니다.",
+      );
+    }
+    try {
+      const toDate = previousKoreanBusinessDate();
+      const master = (await this.#instrumentMaster.search(symbol, 1)).items[0];
+      const market = master?.market === "KOSDAQ" ? "KOSDAQ" : "KOSPI";
+      const trade = await new KrxShortSellingClient().getTradeByStock({
+        symbol,
+        market,
+        fromDate: koreanDateOffset(toDate, -32),
+        toDate,
+      });
+      return {
+        schemaVersion: 1,
+        state: "PARTIAL",
+        source: "KRX_DATA_PRODUCT",
+        instrumentId: `KRX:${symbol}`,
+        symbol,
+        marketScope: "KR",
+        fetchedAt: trade.fetchedAt,
+        trade: {
+          businessDate: calendarDate(trade.businessDate),
+          shortSellVolume: trade.shortSellVolume,
+          shortSellTurnover: trade.shortSellTurnover,
+          shortSellRatio: trade.shortSellRatio,
+        },
+        balance: null,
+        lendingBalance: null,
+        statusMessage:
+          "KRX 통계 CSV 종목별 공매도 거래 수신 · 공매도 잔고와 대차잔고는 전용 payload 확인 후 연결됩니다.",
+      };
+    } catch (error) {
+      return {
+        ...unsupported(`KRX 공매도 거래 CSV를 받지 못했습니다. ${safeStatusMessage(error)}`),
+        state: "ERROR",
+      };
     }
   }
 

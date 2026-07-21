@@ -11,6 +11,7 @@ import type {
   DesktopPaperOrderResult,
   DesktopRankingProjection,
   DesktopInvestorFlowProjection,
+  DesktopShortSellingProjection,
   DesktopWatchlistQuoteProjection,
 } from "../shared/desktop-contracts.js";
 import { DesktopRuntime } from "./desktop-runtime.js";
@@ -38,6 +39,7 @@ type WorkerCommand =
       readonly sort: unknown;
     }
   | { readonly id: string; readonly kind: "investor-flow-get" }
+  | { readonly id: string; readonly kind: "short-selling-get" }
   | {
       readonly id: string;
       readonly kind: "instrument-search";
@@ -77,6 +79,7 @@ type WorkerResult =
   | DesktopPaperOrderResult
   | DesktopRankingProjection
   | DesktopInvestorFlowProjection
+  | DesktopShortSellingProjection
   | readonly DesktopWatchlistQuoteProjection[]
   | null;
 
@@ -95,6 +98,7 @@ function isWorkerCommand(value: unknown): value is WorkerCommand {
       "chart-history",
       "ranking-get",
       "investor-flow-get",
+      "short-selling-get",
       "instrument-search",
       "information-get",
       "market-context-get",
@@ -159,6 +163,9 @@ process.on("message", (value: unknown) => {
         break;
       case "investor-flow-get":
         result = await runtime.getInvestorFlow();
+        break;
+      case "short-selling-get":
+        result = await runtime.getShortSelling();
         break;
       case "instrument-search":
         result = value.region === "US"

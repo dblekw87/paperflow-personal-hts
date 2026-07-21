@@ -10,6 +10,7 @@ import {
   isAllowedExternalInformationUrl,
   isDesktopRankingProjection,
   isDesktopInvestorFlowProjection,
+  isDesktopShortSellingProjection,
   isSearchableDomesticInstrumentQuery,
   isSearchableUsInstrumentQuery,
   type DesktopAccountProjection,
@@ -27,6 +28,7 @@ import {
   type DesktopRankingProjection,
   type DesktopRankingSort,
   type DesktopInvestorFlowProjection,
+  type DesktopShortSellingProjection,
   type DesktopWatchlistQuoteProjection,
 } from "../shared/desktop-contracts.js";
 
@@ -409,6 +411,17 @@ const desktopApi = Object.freeze({
       );
       if (!isDesktopInvestorFlowProjection(result)) {
         throw new Error("Invalid investor-flow projection.");
+      }
+      return Object.freeze(result);
+    },
+  }),
+  shortSelling: Object.freeze({
+    get: async (): Promise<Readonly<DesktopShortSellingProjection>> => {
+      const result: unknown = await ipcRenderer.invoke(
+        DESKTOP_CHANNELS.shortSellingGet,
+      );
+      if (!isDesktopShortSellingProjection(result)) {
+        throw new Error("Invalid short-selling projection.");
       }
       return Object.freeze(result);
     },

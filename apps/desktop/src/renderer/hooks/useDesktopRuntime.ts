@@ -15,6 +15,7 @@ import type {
   DesktopPaperOrderResult,
   DesktopRankingProjection,
   DesktopRankingSort,
+  DesktopShortSellingProjection,
 } from "../../shared/desktop-contracts.js";
 import { isCurrentDesktopRankingResponse } from "../../shared/desktop-contracts.js";
 
@@ -29,6 +30,7 @@ export interface DesktopRuntimeState {
   readonly marketCalendar: DesktopMarketCalendarProjection | null;
   readonly marketContext: DesktopMarketContextProjection | null;
   readonly investorFlow: DesktopInvestorFlowProjection | null;
+  readonly shortSelling: DesktopShortSellingProjection | null;
   readonly instrumentSearch: DesktopInstrumentSearchProjection | null;
   readonly loadChartHistory: (
     interval: DesktopChartInterval,
@@ -60,6 +62,7 @@ export interface DesktopRuntimeState {
     forceRefresh?: boolean,
   ) => Promise<DesktopMarketContextProjection | null>;
   readonly loadInvestorFlow: () => Promise<DesktopInvestorFlowProjection | null>;
+  readonly loadShortSelling: () => Promise<DesktopShortSellingProjection | null>;
 }
 
 export function useDesktopRuntime(): DesktopRuntimeState {
@@ -78,6 +81,8 @@ export function useDesktopRuntime(): DesktopRuntimeState {
     useState<DesktopMarketContextProjection | null>(null);
   const [investorFlow, setInvestorFlow] =
     useState<DesktopInvestorFlowProjection | null>(null);
+  const [shortSelling, setShortSelling] =
+    useState<DesktopShortSellingProjection | null>(null);
   const [instrumentSearch, setInstrumentSearch] =
     useState<DesktopInstrumentSearchProjection | null>(null);
   const requestedChart = useRef<string | null>(null);
@@ -87,6 +92,7 @@ export function useDesktopRuntime(): DesktopRuntimeState {
   const marketContextRequestSequence = useRef(0);
   const marketCalendarRequestSequence = useRef(0);
   const investorFlowRequestSequence = useRef(0);
+  const shortSellingRequestSequence = useRef(0);
   const instrumentSearchSequence = useRef(0);
 
   useEffect(() => {
@@ -253,6 +259,64 @@ export function useDesktopRuntime(): DesktopRuntimeState {
     const timer = window.setInterval(() => void loadInvestorFlow(), 30_000);
     return () => window.clearInterval(timer);
   }, [loadInvestorFlow, market?.instrumentId]);
+
+  const loadShortSelling = useCallback(
+    async (): Promise<DesktopShortSellingProjection | null> => {
+      const api = window.paperTradingDesktop;
+      if (!api) return null;
+      const expectedInstrumentId = activeInstrumentId.current;
+      const requestSequence = ++shortSellingRequestSequence.current;
+      setShortSelling((current) => ({
+        schemaVersion: 1,
+        state: "LOADING",
+        source: current?.source ?? "UNSUPPORTED",
+        instrumentId: expectedInstrumentId ?? current?.instrumentId ?? "KRX:000000",
+        symbol: expectedInstrumentId?.split(":")[1] ?? current?.symbol ?? "000000",
+        marketScope: expectedInstrumentId?.startsWith("KRX:") ? "KR" : "US",
+        fetchedAt: current?.fetchedAt ?? null,
+        trade: current?.trade ?? null,
+        balance: current?.balance ?? null,
+        lendingBalance: current?.lendingBalance ?? null,
+        statusMessage: "KRX 공매도 통계를 조회하는 중입니다.",
+      }));
+      try {
+        const projection = await api.shortSelling.get();
+        if (
+          requestSequence !== shortSellingRequestSequence.current ||
+          projection.instrumentId !== expectedInstrumentId
+        ) {
+          return null;
+        }
+        setShortSelling(projection);
+        return projection;
+      } catch {
+        if (requestSequence === shortSellingRequestSequence.current) {
+          setShortSelling((current) => ({
+            schemaVersion: 1,
+            state: "ERROR",
+            source: "UNSUPPORTED",
+            instrumentId: expectedInstrumentId ?? current?.instrumentId ?? "KRX:000000",
+            symbol: expectedInstrumentId?.split(":")[1] ?? current?.symbol ?? "000000",
+            marketScope: expectedInstrumentId?.startsWith("KRX:") ? "KR" : "US",
+            fetchedAt: current?.fetchedAt ?? null,
+            trade: null,
+            balance: null,
+            lendingBalance: null,
+            statusMessage: "공매도 projection을 불러오지 못했습니다.",
+          }));
+        }
+        return null;
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!window.paperTradingDesktop || !market?.instrumentId) return;
+    void loadShortSelling();
+    const timer = window.setInterval(() => void loadShortSelling(), 60_000);
+    return () => window.clearInterval(timer);
+  }, [loadShortSelling, market?.instrumentId]);
 
   const submitPaperOrder = useCallback(
     async (
@@ -437,7 +501,9 @@ export function useDesktopRuntime(): DesktopRuntimeState {
         : `${usSelection[1] === "NAS" ? "NASDAQ" : usSelection[1] === "NYS" ? "NYSE" : "AMEX"}:${usSelection[2]}`;
       activeInstrumentId.current = expectedInstrumentId;
       investorFlowRequestSequence.current += 1;
+      shortSellingRequestSequence.current += 1;
       setInvestorFlow(null);
+      setShortSelling(null);
       try {
         requestedChart.current = null;
         setChart(null);
@@ -541,6 +607,7 @@ export function useDesktopRuntime(): DesktopRuntimeState {
     marketCalendar,
     marketContext,
     investorFlow,
+    shortSelling,
     instrumentSearch,
     loadChartHistory,
     loadRanking,
@@ -551,6 +618,7 @@ export function useDesktopRuntime(): DesktopRuntimeState {
     loadMarketCalendar,
     loadMarketContext,
     loadInvestorFlow,
+    loadShortSelling,
     submitPaperOrder,
   };
 }

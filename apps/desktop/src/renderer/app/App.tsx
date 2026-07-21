@@ -2602,6 +2602,8 @@ export function App() {
           instrumentId={activeInstrumentId}
           symbol={activeSymbol}
           marketScope={isUsSelection ? "US" : "KR"}
+          projection={desktop.shortSelling}
+          onRefresh={() => void desktop.loadShortSelling()}
         />
 
         <div
