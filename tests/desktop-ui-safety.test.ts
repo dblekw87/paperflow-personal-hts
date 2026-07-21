@@ -131,6 +131,19 @@ describe("desktop HTS UI safety invariants", () => {
     expect(newsEffectBlock).toContain("desktop.loadInformationFeed(false)");
   });
 
+  it("caps order-book quantity by side before submitting local paper orders", () => {
+    const app = readFileSync(join(rendererRoot, "app", "App.tsx"), "utf8");
+
+    expect(app).toContain("function currencyDecimalToMinor");
+    expect(app).toContain("const clampOrderQuantityForSide");
+    expect(app).toContain('side === "BUY"');
+    expect(app).toContain("desktop.account?.baseCurrency === activeCurrency");
+    expect(app).toContain("cashMinor / priceMinor");
+    expect(app).toContain("activePosition?.quantity");
+    expect(app).toContain("clampOrderQuantityForSide(side, draft.quantity, price)");
+    expect(app).toContain("clampOrderQuantityForSide(current.side, quantity)");
+  });
+
   it("uses hardened Electron renderer settings and denies external windows", () => {
     const main = readFileSync(
       join(process.cwd(), "apps", "desktop", "src", "main", "main.ts"),

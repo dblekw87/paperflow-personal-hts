@@ -642,6 +642,17 @@ function normalizePriceInput(value: string, currency: string): string | null {
   return pattern.test(normalized) && normalized !== "0" ? normalized : null;
 }
 
+function currencyDecimalToMinor(value: string, currency: string): bigint | null {
+  const normalized = value.replaceAll(",", "").trim();
+  const scale = currency === "USD" ? 2 : currency === "KRW" ? 0 : null;
+  if (scale === null || !/^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(normalized)) {
+    return null;
+  }
+  const [whole = "0", fraction = ""] = normalized.split(".");
+  if (fraction.length > scale) return null;
+  return BigInt(`${whole}${fraction.padEnd(scale, "0")}`);
+}
+
 function formatCashMinor(value: string | null | undefined, currency: string): string {
   if (value === null || value === undefined || !/^-?\d+$/.test(value)) return "—";
   if (currency === "USD") {
@@ -1792,6 +1803,32 @@ export function App() {
     });
   };
 
+  const clampOrderQuantityForSide = (
+    side: "BUY" | "SELL",
+    quantity: string,
+    price: string | null = draft.limitPrice || desktop.market?.price || null,
+  ): string => {
+    const requested = parseWholeNumberInput(quantity);
+    if (side === "BUY") {
+      const priceMinor =
+        price === null ? null : currencyDecimalToMinor(price, activeCurrency);
+      const cashMinor =
+        desktop.account?.baseCurrency === activeCurrency &&
+        /^\d+$/.test(desktop.account.cashMinor)
+          ? BigInt(desktop.account.cashMinor)
+          : null;
+      if (priceMinor === null || priceMinor <= 0n || cashMinor === null) {
+        return quantity;
+      }
+      const affordableQuantity = cashMinor / priceMinor;
+      return requested > affordableQuantity
+        ? affordableQuantity.toString()
+        : quantity;
+    }
+    const available = parseWholeNumberInput(activePosition?.quantity ?? "0");
+    return requested > available ? available.toString() : quantity;
+  };
+
   const numericQuantity = parseWholeNumberInput(draft.quantity);
 
   const submitPaperDraft = async (orderDraft: OrderTicketDraft) => {
@@ -1869,11 +1906,13 @@ export function App() {
     );
   };
   const submitOrderBookLevel = (side: "BUY" | "SELL", price: string) => {
+    const quantity = clampOrderQuantityForSide(side, draft.quantity, price);
     const nextDraft: OrderTicketDraft = {
       ...draft,
       side,
       orderType: "LIMIT",
       limitPrice: price,
+      quantity,
     };
     setDraft(nextDraft);
     void submitPaperDraft(nextDraft);
@@ -2520,7 +2559,10 @@ export function App() {
                   : "수량을 입력해 주세요."
             }
             onOrderQuantityChange={(quantity) =>
-              setDraft((current) => ({ ...current, quantity }))
+              setDraft((current) => ({
+                ...current,
+                quantity: clampOrderQuantityForSide(current.side, quantity),
+              }))
             }
             onLevelOrder={submitOrderBookLevel}
             pendingOrders={(desktop.account?.openOrders ?? []).filter(
