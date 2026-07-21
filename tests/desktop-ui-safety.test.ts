@@ -108,6 +108,29 @@ describe("desktop HTS UI safety invariants", () => {
     expect(preload).not.toContain("ipcRenderer:");
   });
 
+  it("keeps the current workspace page when the header market selector changes", () => {
+    const app = readFileSync(join(rendererRoot, "app", "App.tsx"), "utf8");
+    const selectorStart = app.indexOf('className="market-selector"');
+    const selectorEnd = app.indexOf('className="global-search"', selectorStart);
+    const selectorBlock = app.slice(selectorStart, selectorEnd);
+    const rankingEffectStart = app.indexOf('if (workspacePage === "RANKINGS")');
+    const rankingEffectEnd = app.indexOf("useEffect(() => {\n    if (", rankingEffectStart + 1);
+    const rankingEffectBlock = app.slice(rankingEffectStart, rankingEffectEnd);
+    const newsEffectStart = app.indexOf('workspacePage !== "DASHBOARD" && workspacePage !== "NEWS"');
+    const newsEffectBlock = app.slice(newsEffectStart, newsEffectStart + 500);
+
+    expect(selectorStart).toBeGreaterThan(-1);
+    expect(selectorEnd).toBeGreaterThan(selectorStart);
+    expect(selectorBlock).toContain("setSelectedMarket(market)");
+    expect(selectorBlock).toContain('desktop.selectInstrument("NAS:AAPL")');
+    expect(selectorBlock).toContain('desktop.selectInstrument("005930")');
+    expect(selectorBlock).not.toContain("setWorkspacePage");
+    expect(rankingEffectBlock).toContain(
+      'desktop.loadRanking(selectedMarket === "미국" ? "US" : "KRX", rankingSort)',
+    );
+    expect(newsEffectBlock).toContain("desktop.loadInformationFeed(false)");
+  });
+
   it("uses hardened Electron renderer settings and denies external windows", () => {
     const main = readFileSync(
       join(process.cwd(), "apps", "desktop", "src", "main", "main.ts"),

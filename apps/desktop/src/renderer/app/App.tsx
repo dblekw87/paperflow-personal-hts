@@ -1901,7 +1901,6 @@ export function App() {
               setSelectedMarket(market);
               if (hasDesktopRuntime && market === "미국") {
                 setSelectedInstrument({ symbol: "AAPL", name: "Apple", market: null, securityType: "STOCK" });
-                setWorkspacePage("DASHBOARD");
                 setDraft((current) => ({ ...current, limitPrice: "" }));
                 setNotice("Apple(AAPL) 미국 3개 세션 실시간 시세를 연결하는 중입니다.");
                 void desktop.selectInstrument("NAS:AAPL").then((projection) => {
@@ -1909,7 +1908,6 @@ export function App() {
                 });
               } else if (hasDesktopRuntime && market === "국내" && ["NASDAQ", "NYSE", "AMEX"].includes(desktop.market?.venue ?? "")) {
                 setSelectedInstrument({ symbol: "005930", name: "삼성전자", market: "KOSPI", securityType: "STOCK" });
-                setWorkspacePage("DASHBOARD");
                 setDraft((current) => ({ ...current, limitPrice: "" }));
                 setNotice("삼성전자(005930) 국내 통합 시세를 연결하는 중입니다.");
                 void desktop.selectInstrument("005930").then((projection) => {
