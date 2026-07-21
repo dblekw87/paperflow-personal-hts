@@ -7,7 +7,7 @@ export interface LocalWatchlistItem {
   readonly instrumentId: string;
   readonly symbol: string;
   readonly name: string;
-  readonly market: DomesticEquityMarket | null;
+  readonly market: DomesticEquityMarket | "NASDAQ" | "NYSE" | "AMEX" | null;
   readonly securityType: DomesticSecurityType | null;
 }
 
@@ -30,7 +30,10 @@ function isLocalWatchlistItem(value: unknown): value is LocalWatchlistItem {
       ? item["market"] === null ||
       item["market"] === "KOSPI" ||
         item["market"] === "KOSDAQ"
-      : item["market"] === null) &&
+      : item["market"] === null ||
+        item["market"] === "NASDAQ" ||
+        item["market"] === "NYSE" ||
+        item["market"] === "AMEX") &&
     (item["securityType"] === null ||
       ["STOCK", "ETF", "ETN", "OTHER"].includes(
         String(item["securityType"]),

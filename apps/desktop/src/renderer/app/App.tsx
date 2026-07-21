@@ -430,6 +430,21 @@ function marketDirection(
       : "positive";
 }
 
+function instrumentVenueLabel(instrumentId: string, domesticMarket?: string | null): string {
+  if (instrumentId.startsWith("NASDAQ:")) return "NASDAQ";
+  if (instrumentId.startsWith("NYSE:")) return "NYSE";
+  if (instrumentId.startsWith("AMEX:")) return "AMEX";
+  return domesticMarket === "KOSPI" || domesticMarket === "KOSDAQ"
+    ? domesticMarket
+    : "KRX";
+}
+
+function formatInstrumentPrice(value: string, instrumentId: string): string {
+  return /^(NASDAQ|NYSE|AMEX):/.test(instrumentId)
+    ? `$${truncateUsPrice(value, value)}`
+    : `${formatWholeNumber(value, value)}원`;
+}
+
 function orderBookLevelChange(
   priceValue: string,
   previousCloseValue: string | null,
@@ -937,10 +952,11 @@ export function App() {
         price: displayPrice,
         changeRate: displayChangeRate,
         direction: displayDirection,
-        turnover: formatKrwTurnoverEok(
-          desktop.market?.cumulativeTurnover ?? null,
-          "—",
-        ),
+        turnover: isUsMarket
+          ? desktop.market?.cumulativeTurnover
+            ? `$${formatWholeNumber(desktop.market.cumulativeTurnover.split(".")[0] ?? null, "—")}`
+            : "—"
+          : formatKrwTurnoverEok(desktop.market?.cumulativeTurnover ?? null, "—"),
         freshness: isKisLive ? "live" : "stale",
       });
       return next;
@@ -954,6 +970,7 @@ export function App() {
     displayPrice,
     hasDesktopRuntime,
     isKisLive,
+    isUsMarket,
   ]);
   const chartCurrentPrice =
     desktop.market?.price ?? (hasDesktopRuntime ? null : "84700");
@@ -1309,7 +1326,7 @@ export function App() {
           instrumentId: item.instrumentId,
           symbol: item.symbol,
           name: item.name,
-          market: item.market ?? "KRX",
+          market: instrumentVenueLabel(item.instrumentId, item.market),
           price: active ? displayPrice : (snapshot?.price ?? "—"),
           changeRate: active
             ? displayChangeRate
@@ -1764,7 +1781,10 @@ export function App() {
           setSelectedInstrument({
             symbol: item.symbol,
             name: item.name,
-            market: item.market,
+            market:
+              item.market === "KOSPI" || item.market === "KOSDAQ"
+                ? item.market
+                : null,
             securityType: item.securityType,
           });
           setWorkspacePage("DASHBOARD");
@@ -1861,7 +1881,7 @@ export function App() {
         <InstrumentHeader
           name={activeInstrumentName}
           symbol={activeSymbol}
-          market={desktop.market?.venue ?? "KRX"}
+          market={desktop.market?.venue ?? (isUsSelection ? "미국" : "KRX")}
           currency={activeCurrency}
           price={displayPrice}
           change={displayChange}
@@ -1894,7 +1914,9 @@ export function App() {
                   instrumentId: activeInstrumentId,
                   symbol: activeSymbol,
                   name: activeInstrumentName,
-                  market: activeDomesticMarket,
+                  market: isUsMarket
+                    ? (desktop.market?.venue as "NASDAQ" | "NYSE" | "AMEX")
+                    : activeDomesticMarket,
                   securityType: activeSecurityType,
                 },
               ];
@@ -2013,10 +2035,7 @@ export function App() {
                   : "+₩528,000",
               ...(activePosition?.averagePrice
                 ? {
-                    subValue: `평균 ${formatWholeNumber(
-                      activePosition.averagePrice,
-                      activePosition.averagePrice,
-                    )}원`,
+                    subValue: `평균 ${formatInstrumentPrice(activePosition.averagePrice, activePosition.instrumentId)}`,
                   }
                 : {}),
               direction: hasDesktopRuntime ? "flat" : "positive",
@@ -2230,7 +2249,7 @@ export function App() {
               <article className="pt-page-card pt-page-card--wide">
                 <div className="pt-page-card__toolbar">
                   <div>
-                    <h2>KIS KRX 일일 거래 순위</h2>
+                    <h2>{isUsSelection ? "KIS 미국 일일 거래 순위" : "KIS KRX 일일 거래 순위"}</h2>
                     <p>
                       {desktop.ranking?.statusMessage ??
                         "KIS 읽기 전용 거래 순위를 불러오는 중입니다."}
@@ -2356,7 +2375,7 @@ export function App() {
                               <span className="pt-ranking-instrument">
                                 <span className="pt-ranking-instrument__text">
                                   <strong>{item.name}</strong>
-                                  <small>{item.symbol} · KRX</small>
+                                  <small>{item.symbol} · {instrumentVenueLabel(item.instrumentId)}</small>
                                 </span>
                               </span>
                             </td>
@@ -2407,9 +2426,9 @@ export function App() {
                         : "실제 KIS 거래 순위를 기다리는 중입니다"}
                     </strong>
                     <span>
-                      합성 순위는 표시하지 않습니다. KIS 모의 키에서는
-                      거래량·거래대금 순위가 지원되며 등락률 전용 순위와
-                      뉴스는 실전 데이터 키가 필요합니다.
+                      {isUsSelection
+                        ? "합성 순위는 표시하지 않습니다. KIS 미국 NASDAQ·NYSE·AMEX 읽기 전용 순위를 조회합니다."
+                        : "합성 순위는 표시하지 않습니다. 국내 등락률 전용 순위와 뉴스는 실전 데이터 키가 필요합니다."}
                     </span>
                   </div>
                 )}
@@ -2455,10 +2474,7 @@ export function App() {
                             <td>{position.quantity}주</td>
                             <td>
                               {position.averagePrice
-                                ? `${formatWholeNumber(
-                                    position.averagePrice,
-                                    position.averagePrice,
-                                  )}원`
+                                ? formatInstrumentPrice(position.averagePrice, position.instrumentId)
                                 : "계산 대기"}
                             </td>
                           </tr>
@@ -2504,7 +2520,7 @@ export function App() {
                             {fill.side === "BUY" ? "매수" : "매도"}
                           </td>
                           <td>
-                            {formatWholeNumber(fill.price, fill.price)}원
+                            {formatInstrumentPrice(fill.price, fill.instrumentId)}
                           </td>
                           <td>{fill.quantity}주</td>
                           <td>
@@ -2703,7 +2719,7 @@ export function App() {
                   <p>
                     KIS WebSocket: {isKisLive ? "읽기 전용 연결" : "미연결"}
                   </p>
-                  <p>실시간 거래소: 현재 KRX</p>
+                  <p>실시간 거래소: 현재 {desktop.market?.venue ?? (isUsSelection ? "미국 시장" : "KRX")}</p>
                 </article>
               </div>
             ) : null}

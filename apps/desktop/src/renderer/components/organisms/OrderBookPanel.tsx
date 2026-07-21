@@ -214,7 +214,7 @@ function LevelRows({
           type="button"
           disabled={!canOrderAtLevel}
           title={canOrderAtLevel ? `${level.price}에 매도 · ${side === "BID" ? "즉시체결 예상" : "체결 대기 예상"}` : level.referenceOnly ? "참고 가격대는 실제 잔량이 없어 주문 근거로 사용하지 않습니다." : disabledReason}
-          aria-label={`${level.price}원 입력 수량 매도`}
+          aria-label={`${level.price}${isUsPriceDisplay ? "달러" : "원"} 입력 수량 매도`}
         onClick={() => onLevelOrder("SELL", level.price)}
         className={sellPending ? "has-pending-order" : undefined}
         >{sellPending}</button>
@@ -261,7 +261,7 @@ function LevelRows({
           type="button"
           disabled={!canOrderAtLevel}
           title={canOrderAtLevel ? `${level.price}에 매수 · ${side === "ASK" ? "즉시체결 예상" : "체결 대기 예상"}` : level.referenceOnly ? "참고 가격대는 실제 잔량이 없어 주문 근거로 사용하지 않습니다." : disabledReason}
-          aria-label={`${level.price}원 입력 수량 매수`}
+          aria-label={`${level.price}${isUsPriceDisplay ? "달러" : "원"} 입력 수량 매수`}
           onClick={() => onLevelOrder("BUY", level.price)}
           className={buyPending ? "has-pending-order" : undefined}
         >{buyPending}</button>

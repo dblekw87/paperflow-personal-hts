@@ -6,8 +6,10 @@ describe("local watchlist", () => {
   it("keeps valid US instruments so market tabs can be filtered independently", () => {
     expect(readLocalWatchlist(JSON.stringify([
       { instrumentId: "KRX:005930", symbol: "005930", name: "삼성전자", market: "KOSPI", securityType: "STOCK" },
-      { instrumentId: "NASDAQ:AAPL", symbol: "AAPL", name: "Apple", market: null, securityType: "STOCK" },
-    ]))).toHaveLength(2);
+      { instrumentId: "NASDAQ:AAPL", symbol: "AAPL", name: "Apple", market: "NASDAQ", securityType: "STOCK" },
+    ]))).toEqual(expect.arrayContaining([
+      expect.objectContaining({ instrumentId: "NASDAQ:AAPL", market: "NASDAQ" }),
+    ]));
   });
 
   it("only restores explicitly stored valid KRX instruments", () => {
