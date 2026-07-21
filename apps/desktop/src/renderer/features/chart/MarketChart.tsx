@@ -422,8 +422,13 @@ export function MarketChart({
     PLOT_RIGHT,
   );
   const xAt = (index: number) => plotStart + step * (index + 0.5);
+  const maxTimeAxisLabels = Math.max(
+    2,
+    Math.min(8, Math.floor((plotEnd - plotStart) / 90) + 1),
+  );
   const timeAxisTickIndexes = chartTimeAxisTickIndexes(
     usableCandles.length,
+    maxTimeAxisLabels,
   );
   const currentPriceValue = finiteNumber(currentPrice);
   const previousCloseValue = finiteNumber(previousClosePrice);

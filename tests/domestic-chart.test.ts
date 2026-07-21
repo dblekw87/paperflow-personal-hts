@@ -264,7 +264,7 @@ describe("KIS domestic candle REST contract", () => {
     expect(history.pagination.complete).toBe(true);
   });
 
-  it("skips future-stamped pre-open minute rows and reaches the prior session", async () => {
+  it("skips future-stamped pre-open minute rows and keeps paginating the prior session", async () => {
     const requests: string[] = [];
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       const url = new URL(String(input));
@@ -279,13 +279,24 @@ describe("KIS domestic candle REST contract", () => {
                   stck_bsop_date: "20260721",
                 },
               ]
-            : [
+            : requests.length === 2
+              ? [
                 {
                   ...minuteRow(9 * 60),
                   stck_bsop_date: "20260721",
                 },
                 {
                   ...minuteRow(15 * 60 + 30),
+                  stck_bsop_date: "20260717",
+                },
+              ]
+              : [
+                {
+                  ...minuteRow(15 * 60 + 19),
+                  stck_bsop_date: "20260717",
+                },
+                {
+                  ...minuteRow(15 * 60 + 18),
                   stck_bsop_date: "20260717",
                 },
               ],
@@ -300,12 +311,17 @@ describe("KIS domestic candle REST contract", () => {
     const history = await client.getDomesticMinuteCandles({
       symbol: "320000",
       beforeOrAt: "153000",
-      maxPages: 2,
+      maxPages: 3,
     });
 
-    expect(requests).toEqual(["153000", "090000"]);
-    expect(history.candles).toHaveLength(1);
+    expect(requests).toEqual(["153000", "090000", "152900"]);
+    expect(history.candles).toHaveLength(3);
     expect(history.candles[0]).toMatchObject({
+      instrumentId: "KRX:320000",
+      openedAt: "2026-07-17T06:18:00.000Z",
+      state: "CLOSED",
+    });
+    expect(history.candles.at(-1)).toMatchObject({
       instrumentId: "KRX:320000",
       openedAt: "2026-07-17T06:29:00.000Z",
       state: "CLOSED",

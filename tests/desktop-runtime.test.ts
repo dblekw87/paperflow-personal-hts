@@ -606,6 +606,18 @@ describe("Electron desktop runtime boundary", () => {
           ...executable,
           venue: "NASDAQ",
           session: "PRE",
+          tradeReceivedAt: null,
+          orderBookReceivedAt: "2026-07-20T06:09:59.000Z",
+        },
+        now,
+      ),
+    ).toBe(true);
+    expect(
+      isDesktopPaperMarketExecutable(
+        {
+          ...executable,
+          venue: "NASDAQ",
+          session: "PRE",
           orderBookReceivedAt: "2026-07-20T06:08:59.999Z",
         },
         now,

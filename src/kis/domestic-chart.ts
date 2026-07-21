@@ -182,24 +182,28 @@ export class KisDomesticChartClient {
         complete = true;
         break;
       }
-      if (cursor === "090000") {
-        // Only a provider request at the session boundary can prove whether
-        // the 09:00 candle exists. A prior page ending at 09:01 is not enough.
-        complete = true;
-        break;
-      }
       const oldest = oldestProviderTime(
         currentBusinessDayRows.length > 0
           ? currentBusinessDayRows
           : pageRows,
       );
+      if (cursor === "090000" && oldest < "120000") {
+        // Only a provider request at the session boundary can prove whether
+        // the 09:00 candle exists. When a pre-open response spills into the
+        // prior business day, the observed row can be 15:30; keep paginating
+        // from that prior session instead of replacing the chart with one bar.
+        complete = true;
+        break;
+      }
       const next = previousMinuteCursor(oldest);
       if (next === null || next < "090000") {
         complete = true;
         cursor = next ?? cursor;
         break;
       }
-      if (next >= cursor) {
+      const crossedToPriorSession =
+        cursor === "090000" && oldest >= "120000";
+      if (next >= cursor && !crossedToPriorSession) {
         complete = false;
         break;
       }

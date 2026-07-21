@@ -613,6 +613,12 @@ export function isDesktopPaperMarketExecutable(
   nowMs = Date.now(),
 ): boolean {
   const isUsVenue = ["NASDAQ", "NYSE", "AMEX"].includes(market.venue);
+  const hasFreshBook = isRecentProviderEvent(
+    market.orderBookReceivedAt,
+    nowMs,
+    isUsVenue ? 60_000 : MAX_EXECUTION_MARKET_AGE_MS,
+  );
+  const hasFreshTrade = isRecentProviderEvent(market.tradeReceivedAt, nowMs);
   return (
     market.mode === "KIS_READ_ONLY" &&
     market.connectionState === "LIVE" &&
@@ -622,12 +628,8 @@ export function isDesktopPaperMarketExecutable(
         (market.session === "PRE" || market.session === "AFTER")) ||
       (isUsVenue &&
         (market.session === "PRE" || market.session === "AFTER"))) &&
-    isRecentProviderEvent(
-      market.orderBookReceivedAt,
-      nowMs,
-      isUsVenue ? 60_000 : MAX_EXECUTION_MARKET_AGE_MS,
-    ) &&
-    isRecentProviderEvent(market.tradeReceivedAt, nowMs) &&
+    hasFreshBook &&
+    (isUsVenue || hasFreshTrade) &&
     market.bids.length > 0 &&
     market.asks.length > 0
   );

@@ -14,6 +14,10 @@ describe("market chart time axis", () => {
     expect(indexes.at(-1)).toBe(379);
   });
 
+  it("can reduce labels for a compact right-aligned short series", () => {
+    expect(chartTimeAxisTickIndexes(5, 2)).toEqual([0, 4]);
+  });
+
   it("formats intraday ticks as KRX hour and minute", () => {
     expect(
       formatChartTimeAxisLabel(
