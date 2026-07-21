@@ -309,6 +309,30 @@ function indicatorClass(index: number): string {
   return `market-chart__indicator market-chart__indicator--${index % 12}`;
 }
 
+function aggregateFillsBySide(fills: readonly PaperFillMarkerViewModel[]) {
+  return (["BUY", "SELL"] as const).flatMap((side) => {
+    const matching = fills.filter((fill) => fill.side === side);
+    if (matching.length === 0) return [];
+    let quantity = 0n;
+    let principal = 0n;
+    for (const fill of matching) {
+      if (!/^\d+$/.test(fill.quantity) || !/^\d+$/.test(fill.price)) continue;
+      const nextQuantity = BigInt(fill.quantity);
+      quantity += nextQuantity;
+      principal += nextQuantity * BigInt(fill.price);
+    }
+    if (quantity <= 0n) return [];
+    return [{
+      id: `${side}:${matching.map((fill) => fill.id).join(":")}`,
+      side,
+      quantity: quantity.toString(),
+      price: (principal / quantity).toString(),
+      count: matching.length,
+      partial: matching.some((fill) => fill.completion === "PARTIAL"),
+    }];
+  });
+}
+
 export function MarketChart({
   instrumentId,
   instrumentName,
@@ -1207,22 +1231,22 @@ export function MarketChart({
 
             {Array.from(fillsByCandle.entries()).flatMap(
               ([candleIndex, fills]) =>
-                fills.map((fill, markerIndex) => {
+                aggregateFillsBySide(fills).map((fill) => {
                   const price = finiteNumber(fill.price);
                   if (price === null) {
                     return null;
                   }
-                  const x =
-                    xAt(candleIndex) +
-                    (markerIndex - (fills.length - 1) / 2) * 8;
-                  const y = yFor(price, priceScale, PRICE_TOP, PRICE_BOTTOM);
+                  const x = xAt(candleIndex) + (fill.side === "BUY" ? -4 : 4);
+                  const rawY = yFor(price, priceScale, PRICE_TOP, PRICE_BOTTOM);
                   const isBuy = fill.side === "BUY";
+                  const y = Math.max(PRICE_TOP + 10, Math.min(PRICE_BOTTOM - 10, rawY + (isBuy ? 9 : -9)));
                   return (
                     <g
                       key={fill.id}
-                      className={`market-chart__fill market-chart__fill--${fill.side.toLowerCase()} market-chart__fill--${fill.completion.toLowerCase()}`}
-                      aria-label={`${fill.side === "BUY" ? "모의 매수" : "모의 매도"} ${fill.completion === "PARTIAL" ? "부분체결" : "전량체결"} ${fill.quantity}주, ${fill.price} ${currency}`}
+                      className={`market-chart__fill market-chart__fill--${fill.side.toLowerCase()}${fill.partial ? " market-chart__fill--partial" : ""}`}
+                      aria-label={`${isBuy ? "매수" : "매도"} ${fill.count}건, 합계 ${fill.quantity}주, 평균 ${fill.price} ${currency}`}
                     >
+                      <title>{`${isBuy ? "매수" : "매도"} ${fill.count}건 · ${fill.quantity}주 · 평균 ${fill.price} ${currency}`}</title>
                       <path
                         className="market-chart__fill-shape"
                         d={
@@ -1231,18 +1255,6 @@ export function MarketChart({
                             : `M${x},${y + 7} L${x - 6},${y - 5} L${x + 6},${y - 5} Z`
                         }
                       />
-                      <text
-                        className="market-chart__fill-label"
-                        x={x}
-                        y={isBuy ? y + 17 : y - 10}
-                        textAnchor="middle"
-                      >
-                        {fill.completion === "PARTIAL"
-                          ? `${isBuy ? "B" : "S"}·P`
-                          : isBuy
-                            ? "BUY"
-                            : "SELL"}
-                      </text>
                     </g>
                   );
                 }),

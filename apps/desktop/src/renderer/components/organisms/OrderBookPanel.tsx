@@ -126,7 +126,6 @@ function TradeTape({
         </strong>
       </div>
       <div className="pt-order-book__trade-head">
-        <span>시간</span>
         <span>체결가</span>
         <span>체결량</span>
       </div>
@@ -134,10 +133,7 @@ function TradeTape({
         {recentTrades.length > 0 ? (
           recentTrades.slice(0, 8).map((trade) => (
             <li key={trade.id} className={trade.direction}>
-              <time dateTime={trade.occurredAt}>
-                {formatTradeTime(trade.occurredAt)}
-              </time>
-              <strong>{trade.price}</strong>
+              <strong title={formatTradeTime(trade.occurredAt)}>{trade.price}</strong>
               <span>{trade.quantity ?? "—"}</span>
             </li>
           ))
@@ -306,6 +302,13 @@ export function OrderBookPanel({
       <div className="pt-order-book__dealing-layout">
         <div className="pt-order-book__table-wrap">
           <table className="pt-order-book__table">
+            <colgroup>
+              <col className="pt-order-book__col-action" />
+              <col className="pt-order-book__col-auxiliary" />
+              <col className="pt-order-book__col-price" />
+              <col className="pt-order-book__col-auxiliary" />
+              <col className="pt-order-book__col-action" />
+            </colgroup>
             <caption className="pt-visually-hidden">
               {instrumentId}{" "}
               {dataMode === "FIXTURE"
@@ -320,11 +323,11 @@ export function OrderBookPanel({
             </caption>
             <thead>
               <tr>
-                <th scope="col">매도</th>
-                <th scope="col">매도 잔량·체결</th>
+                <th scope="col"><span className="pt-visually-hidden">매도 주문</span></th>
+                <th scope="col">매도잔량</th>
                 <th scope="col">가격 (등락률)</th>
-                <th scope="col">매수 잔량</th>
-                <th scope="col">매수</th>
+                <th scope="col">매수잔량</th>
+                <th scope="col"><span className="pt-visually-hidden">매수 주문</span></th>
               </tr>
             </thead>
             <tbody>

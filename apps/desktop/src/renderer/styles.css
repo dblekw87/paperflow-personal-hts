@@ -881,9 +881,29 @@ select:focus-visible {
 
 .trading-grid {
   display: grid;
-  grid-template-columns: minmax(500px, 0.95fr) minmax(620px, 1.65fr);
+  grid-template-columns: repeat(2, minmax(500px, 1fr));
   gap: 8px;
-  align-items: start;
+  align-items: stretch;
+}
+
+.trading-grid > .market-chart { order: 1; }
+.trading-grid > .pt-order-book { order: 2; }
+
+.trading-grid > .market-chart,
+.trading-grid > .pt-order-book {
+  height: 720px;
+  min-height: 720px;
+  max-height: 720px;
+}
+
+.trading-grid > .pt-order-book .pt-order-book__dealing-layout {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.trading-grid > .pt-order-book .pt-order-book__table-wrap {
+  height: 100%;
+  overflow: auto;
 }
 
 .pt-panel,
@@ -997,9 +1017,10 @@ select:focus-visible {
 }
 
 .pt-order-book__table-wrap {
-  min-width: 390px;
+  min-width: 488px;
   flex: 1;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .pt-order-book__dealing-layout {
@@ -1014,6 +1035,10 @@ select:focus-visible {
   font: 13px var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
+
+.pt-order-book__col-action { width: 48px; }
+.pt-order-book__col-auxiliary { width: 122px; }
+.pt-order-book__col-price { width: 148px; }
 
 .pt-order-book th {
   height: 28px;
@@ -1036,7 +1061,6 @@ select:focus-visible {
 
 .pt-order-book__quantity {
   position: relative;
-  width: 132px;
   overflow: hidden;
 }
 
@@ -1067,7 +1091,6 @@ select:focus-visible {
 }
 
 .pt-order-book__price {
-  width: 148px;
   padding-inline: 7px !important;
   text-align: center !important;
   white-space: nowrap;
@@ -1110,7 +1133,6 @@ select:focus-visible {
 
 .pt-order-book__stats-cell,
 .pt-order-book__tape-cell {
-  width: 132px;
   padding: 0 !important;
   vertical-align: top;
   background: var(--color-bg-canvas);
@@ -1118,8 +1140,8 @@ select:focus-visible {
 
 .pt-order-book__reference-stats { margin: 0; padding: 5px 8px; }
 .pt-order-book__reference-stats div {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   min-height: 21px;
   align-items: center;
@@ -1139,7 +1161,7 @@ select:focus-visible {
 .pt-order-book__trade-head,
 .pt-order-book__trade-tape li {
   display: grid;
-  grid-template-columns: 48px minmax(62px, 1fr) 42px;
+  grid-template-columns: minmax(0, 1fr) 36px;
   align-items: center;
   gap: 4px;
 }
@@ -1155,10 +1177,9 @@ select:focus-visible {
 .pt-order-book__trade-strength strong.negative,
 .pt-order-book__trade-tape li.negative strong { color: var(--color-negative); }
 .pt-order-book__trade-head { min-height: 20px; color: var(--color-text-tertiary); font-size: 9px; }
-.pt-order-book__trade-head span:not(:first-child) { text-align: right; }
+.pt-order-book__trade-head span { text-align: right; }
 .pt-order-book__trade-tape ol { margin: 0; padding: 0; list-style: none; }
 .pt-order-book__trade-tape li { min-height: 22px; border-bottom: 1px solid var(--color-border-soft); font-size: 10px; }
-.pt-order-book__trade-tape li time { color: var(--color-text-tertiary); font-size: 9px; }
 .pt-order-book__trade-tape li strong,
 .pt-order-book__trade-tape li span { text-align: right; }
 .pt-order-book__trade-empty { display: block !important; padding-top: 8px; color: var(--color-text-tertiary); text-align: center; }
@@ -2299,7 +2320,7 @@ select:focus-visible {
   }
 
   .trading-grid {
-    grid-template-columns: minmax(440px, 1fr) minmax(430px, 1.2fr);
+    grid-template-columns: repeat(2, minmax(488px, 1fr));
   }
 
   .pt-instrument-header {
