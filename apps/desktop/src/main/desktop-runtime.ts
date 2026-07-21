@@ -2329,6 +2329,22 @@ export class DesktopRuntime {
               : ("PARTIAL" as const),
         };
       }),
+      openOrders: this.#papers
+        .listPaperOrders(ACCOUNT_ID)
+        .filter(
+          (order) =>
+            order.limitPrice !== null &&
+            BigInt(order.remainingQuantity) > 0n &&
+            ["ACCEPTED", "RESTING", "PARTIALLY_FILLED"].includes(order.status),
+        )
+        .map((order) => ({
+          clientOrderId: order.clientOrderId,
+          instrumentId: order.instrumentId,
+          side: order.side,
+          limitPrice: order.limitPrice ?? "0",
+          remainingQuantity: order.remainingQuantity,
+          status: order.status as "ACCEPTED" | "RESTING" | "PARTIALLY_FILLED",
+        })),
       statusMessage: `SQLite WAL · 주문 ${summary.openOrderCount} · 체결 ${summary.fillCount}`,
     };
   }

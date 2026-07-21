@@ -49,6 +49,12 @@ export interface OrderBookPanelProps {
   levelOrderDisabledReason: string;
   onOrderQuantityChange: (quantity: string) => void;
   onLevelOrder: (side: "BUY" | "SELL", price: string) => void;
+  pendingOrders?: readonly {
+    readonly clientOrderId: string;
+    readonly side: "BUY" | "SELL";
+    readonly limitPrice: string;
+    readonly remainingQuantity: string;
+  }[];
 }
 
 interface LevelRowsProps {
@@ -61,11 +67,30 @@ interface LevelRowsProps {
   executionStrength: string | null;
   recentTrades: readonly RecentTradeModel[];
   referenceStats: readonly OrderBookReferenceStat[];
+  pendingOrders: NonNullable<OrderBookPanelProps["pendingOrders"]>;
 }
 
 function normalizedPrice(value: string): string {
   const digits = value.replaceAll(",", "").replace(/[^0-9]/g, "");
   return digits.replace(/^0+(?=\d)/, "");
+}
+
+function pendingOrderLabel(
+  orders: NonNullable<OrderBookPanelProps["pendingOrders"]>,
+  side: "BUY" | "SELL",
+  price: string,
+): string | null {
+  const matches = orders.filter(
+    (order) =>
+      order.side === side &&
+      normalizedPrice(order.limitPrice) === normalizedPrice(price),
+  );
+  if (matches.length === 0) return null;
+  const quantities = matches.map((order) => order.remainingQuantity);
+  const quantity = quantities.every((value) => value === quantities[0])
+    ? quantities[0]
+    : quantities.reduce((sum, value) => sum + BigInt(value), 0n).toString();
+  return matches.length === 1 ? quantity ?? null : `${quantity} (${matches.length})`;
 }
 
 function quantityNumber(value: string): number {
@@ -163,11 +188,14 @@ function LevelRows({
   executionStrength,
   recentTrades,
   referenceStats,
+  pendingOrders,
 }: LevelRowsProps) {
   return levels.map((level, index) => {
     const isCurrentPrice =
       normalizedPrice(level.price) !== "" &&
       normalizedPrice(level.price) === normalizedPrice(currentPrice);
+    const sellPending = pendingOrderLabel(pendingOrders, "SELL", level.price);
+    const buyPending = pendingOrderLabel(pendingOrders, "BUY", level.price);
     return (
     <tr
       className={`pt-order-book__row pt-order-book__row--${side.toLowerCase()} pt-depth--${level.depthBand}${isCurrentPrice ? " pt-order-book__row--current" : ""}`}
@@ -182,8 +210,9 @@ function LevelRows({
           disabled={!canOrder}
           title={canOrder ? `${level.price}원에 매도 · ${side === "BID" ? "즉시체결 예상" : "체결 대기 예상"}` : disabledReason}
           aria-label={`${level.price}원 입력 수량 매도`}
-          onClick={() => onLevelOrder("SELL", level.price)}
-        />
+        onClick={() => onLevelOrder("SELL", level.price)}
+        className={sellPending ? "has-pending-order" : undefined}
+        >{sellPending}</button>
       </td>
       {side === "ASK" ? (
         <td
@@ -229,7 +258,8 @@ function LevelRows({
           title={canOrder ? `${level.price}원에 매수 · ${side === "ASK" ? "즉시체결 예상" : "체결 대기 예상"}` : disabledReason}
           aria-label={`${level.price}원 입력 수량 매수`}
           onClick={() => onLevelOrder("BUY", level.price)}
-        />
+          className={buyPending ? "has-pending-order" : undefined}
+        >{buyPending}</button>
       </td>
     </tr>
     );
@@ -258,6 +288,7 @@ export function OrderBookPanel({
   levelOrderDisabledReason,
   onOrderQuantityChange,
   onLevelOrder,
+  pendingOrders = [],
 }: OrderBookPanelProps) {
   return (
     <section
@@ -355,6 +386,7 @@ export function OrderBookPanel({
                 executionStrength={executionStrength}
                 recentTrades={recentTrades}
                 referenceStats={referenceStats}
+                pendingOrders={pendingOrders}
               />
               <LevelRows
                 levels={bids}
@@ -366,6 +398,7 @@ export function OrderBookPanel({
                 executionStrength={executionStrength}
                 recentTrades={recentTrades}
                 referenceStats={referenceStats}
+                pendingOrders={pendingOrders}
               />
             </tbody>
             <tfoot>

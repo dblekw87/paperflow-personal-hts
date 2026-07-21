@@ -128,6 +128,20 @@ function isAccountProjection(
         (fill["completion"] === "PARTIAL" ||
           fill["completion"] === "FULL"),
     ) &&
+    (value["openOrders"] === undefined ||
+      (Array.isArray(value["openOrders"]) &&
+        value["openOrders"].every(
+          (order) =>
+            isRecord(order) &&
+            typeof order["clientOrderId"] === "string" &&
+            typeof order["instrumentId"] === "string" &&
+            (order["side"] === "BUY" || order["side"] === "SELL") &&
+            typeof order["limitPrice"] === "string" &&
+            typeof order["remainingQuantity"] === "string" &&
+            ["ACCEPTED", "RESTING", "PARTIALLY_FILLED"].includes(
+              String(order["status"]),
+            ),
+        ))) &&
     typeof value["statusMessage"] === "string"
   );
 }

@@ -1338,6 +1338,16 @@ select:focus-visible {
   opacity: 0.34;
 }
 
+.pt-order-book__action-cell button.has-pending-order {
+  color: var(--color-text-primary);
+  letter-spacing: -0.02em;
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+
+.pt-order-book__action-cell button.has-pending-order::before {
+  display: none;
+}
+
 .pt-order-book tfoot td,
 .pt-order-book tfoot th {
   height: 34px;

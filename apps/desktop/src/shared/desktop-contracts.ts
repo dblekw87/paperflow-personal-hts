@@ -64,6 +64,15 @@ export interface DesktopPaperFillProjection {
   readonly completion: "PARTIAL" | "FULL";
 }
 
+export interface DesktopOpenPaperOrderProjection {
+  readonly clientOrderId: string;
+  readonly instrumentId: string;
+  readonly side: "BUY" | "SELL";
+  readonly limitPrice: string;
+  readonly remainingQuantity: string;
+  readonly status: "ACCEPTED" | "RESTING" | "PARTIALLY_FILLED";
+}
+
 export interface DesktopAccountProjection {
   readonly schemaVersion: 1;
   readonly accountId: string;
@@ -78,6 +87,7 @@ export interface DesktopAccountProjection {
   readonly queueSafetyFactor: string | null;
   readonly positions: readonly DesktopPositionProjection[];
   readonly fills: readonly DesktopPaperFillProjection[];
+  readonly openOrders?: readonly DesktopOpenPaperOrderProjection[];
   readonly statusMessage: string;
 }
 

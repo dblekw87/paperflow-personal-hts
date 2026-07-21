@@ -1773,6 +1773,9 @@ export function App() {
               setDraft((current) => ({ ...current, quantity }))
             }
             onLevelOrder={submitOrderBookLevel}
+            pendingOrders={(desktop.account?.openOrders ?? []).filter(
+              (order) => order.instrumentId === activeInstrumentId,
+            )}
           />
 
           <MarketChart
