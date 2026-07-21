@@ -1128,6 +1128,17 @@ select:focus-visible {
   background: color-mix(in srgb, var(--color-positive) 3%, transparent);
 }
 
+.pt-order-book__row--current > td:not(.pt-order-book__stats-cell):not(.pt-order-book__tape-cell) {
+  background-color: color-mix(in srgb, var(--color-accent) 17%, var(--color-bg-elevated));
+}
+
+.pt-order-book__row--current .pt-order-book__price {
+  box-shadow:
+    inset 3px 0 0 color-mix(in srgb, var(--color-accent) 82%, white),
+    inset -3px 0 0 color-mix(in srgb, var(--color-accent) 82%, white);
+  font-weight: 800;
+}
+
 .pt-order-book__row--ask:not([aria-disabled="true"]):hover,
 .pt-order-book__row--ask:focus-within {
   background: color-mix(in srgb, var(--color-negative) 8%, transparent);

@@ -54,12 +54,18 @@ export interface OrderBookPanelProps {
 interface LevelRowsProps {
   levels: readonly OrderBookLevelModel[];
   side: "ASK" | "BID";
+  currentPrice: string;
   canOrder: boolean;
   disabledReason: string;
   onLevelOrder: OrderBookPanelProps["onLevelOrder"];
   executionStrength: string | null;
   recentTrades: readonly RecentTradeModel[];
   referenceStats: readonly OrderBookReferenceStat[];
+}
+
+function normalizedPrice(value: string): string {
+  const digits = value.replaceAll(",", "").replace(/[^0-9]/g, "");
+  return digits.replace(/^0+(?=\d)/, "");
 }
 
 function quantityNumber(value: string): number {
@@ -150,6 +156,7 @@ function TradeTape({
 function LevelRows({
   levels,
   side,
+  currentPrice,
   canOrder,
   disabledReason,
   onLevelOrder,
@@ -157,11 +164,17 @@ function LevelRows({
   recentTrades,
   referenceStats,
 }: LevelRowsProps) {
-  return levels.map((level, index) => (
+  return levels.map((level, index) => {
+    const isCurrentPrice =
+      normalizedPrice(level.price) !== "" &&
+      normalizedPrice(level.price) === normalizedPrice(currentPrice);
+    return (
     <tr
-      className={`pt-order-book__row pt-order-book__row--${side.toLowerCase()} pt-depth--${level.depthBand}`}
+      className={`pt-order-book__row pt-order-book__row--${side.toLowerCase()} pt-depth--${level.depthBand}${isCurrentPrice ? " pt-order-book__row--current" : ""}`}
       key={`${side}:${level.price}`}
       aria-disabled={!canOrder}
+      aria-current={isCurrentPrice ? "true" : undefined}
+      data-current-price={isCurrentPrice ? "true" : undefined}
     >
       <td className="pt-order-book__action-cell pt-order-book__action-cell--sell">
         <button
@@ -219,7 +232,8 @@ function LevelRows({
         />
       </td>
     </tr>
-  ));
+    );
+  });
 }
 
 export function OrderBookPanel({
@@ -334,6 +348,7 @@ export function OrderBookPanel({
               <LevelRows
                 levels={asks}
                 side="ASK"
+                currentPrice={currentPrice}
                 canOrder={canOrderFromLevel}
                 disabledReason={levelOrderDisabledReason}
                 onLevelOrder={onLevelOrder}
@@ -344,6 +359,7 @@ export function OrderBookPanel({
               <LevelRows
                 levels={bids}
                 side="BID"
+                currentPrice={currentPrice}
                 canOrder={canOrderFromLevel}
                 disabledReason={levelOrderDisabledReason}
                 onLevelOrder={onLevelOrder}
