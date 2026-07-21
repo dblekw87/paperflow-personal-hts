@@ -30,13 +30,11 @@ function formatDecimal(value: string | null, currency: "KRW" | "USD"): string {
   }).format(parsed);
 }
 
-function qualityLabel(item: DesktopMarketContextItemProjection): string {
-  if (item.freshness === "UNAVAILABLE") {
-    return item.entitlement === "REQUIRED" ? "권한 필요" : "연결 예정";
-  }
-  return item.representation === "ETF_PROXY"
-    ? "ETF PROXY · REST"
-    : "공식 지수 · REST";
+function availabilityLabel(
+  item: DesktopMarketContextItemProjection,
+): string | null {
+  if (item.freshness !== "UNAVAILABLE") return null;
+  return item.entitlement === "REQUIRED" ? "권한 필요" : "연결 예정";
 }
 
 function MarketContextItem({
@@ -45,6 +43,7 @@ function MarketContextItem({
   readonly item: DesktopMarketContextItemProjection;
 }) {
   const direction = directionOf(item);
+  const availability = availabilityLabel(item);
   const qualityTone =
     item.freshness === "UNAVAILABLE"
       ? item.entitlement === "REQUIRED"
@@ -63,7 +62,9 @@ function MarketContextItem({
           <strong>{item.label}</strong>
           <span>{item.instrumentId}</span>
         </div>
-        <Badge tone={qualityTone}>{qualityLabel(item)}</Badge>
+        {availability === null ? null : (
+          <Badge tone={qualityTone}>{availability}</Badge>
+        )}
       </header>
       <div className="pt-market-context-item__quote">
         <span className="pt-market-context-item__price">

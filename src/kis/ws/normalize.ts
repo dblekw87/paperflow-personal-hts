@@ -75,6 +75,16 @@ export function domesticSessionFromProviderTime(
   return "CLOSED";
 }
 
+export function nxtSessionFromProviderTime(
+  providerTime: string,
+): TradeTick["session"] {
+  if (!/^\d{6}$/.test(providerTime)) return "UNKNOWN";
+  if (providerTime >= "080000" && providerTime < "085000") return "PRE";
+  if (providerTime >= "090030" && providerTime < "152000") return "REGULAR";
+  if (providerTime >= "154000" && providerTime <= "200000") return "AFTER";
+  return "CLOSED";
+}
+
 export function normalizeDomesticTrade(frame: KisPipeFrame): TradeTick[] {
   if (frame.trId !== KIS_TR.domesticTrade) {
     throw new KisApiError({
@@ -134,9 +144,10 @@ function normalizeAlternativeDomesticTrade(
     return TradeTickSchema.parse({
       instrumentId: `${venue}:${required(record, "MKSC_SHRN_ISCD")}`,
       venue,
-      // NXT phase codes are supplied by H0NXMKO0. Do not infer a fillable
-      // phase from wall-clock time or from the consolidated tape.
-      session: "UNKNOWN",
+      // This classification is applied only to an actual NXT trade frame.
+      // The live stream additionally requires the H0NXMKO0 subscription ACK.
+      session:
+        venue === "NXT" ? nxtSessionFromProviderTime(providerTime) : "UNKNOWN",
       price: required(record, "STCK_PRPR"),
       quantity: required(record, "CNTG_VOL"),
       change: signedChange(
@@ -306,6 +317,7 @@ export function normalizeUsTrade(
         optional(record, "RATE"),
         optional(record, "SIGN"),
       ),
+      executionStrength: optional(record, "STRN"),
       cumulativeVolume: optional(record, "TVOL"),
       cumulativeTurnover: optional(record, "TAMT"),
       occurredAt: null,
@@ -328,28 +340,25 @@ export function normalizeUsOrderBook(
     });
   }
 
-  return frame.records.map((record) =>
-    OrderBookSnapshotSchema.parse({
+  return frame.records.map((record) => {
+    const depth = record.pbid10 === undefined ? 1 : 10;
+    return OrderBookSnapshotSchema.parse({
       instrumentId: `${venue}:${required(record, "symb")}`,
       venue,
-      bids: [
-        {
-          price: required(record, "pbid1"),
-          quantity: required(record, "vbid1"),
-        },
-      ],
-      asks: [
-        {
-          price: required(record, "pask1"),
-          quantity: required(record, "vask1"),
-        },
-      ],
+      bids: Array.from({ length: depth }, (_, index) => ({
+        price: required(record, `pbid${index + 1}`),
+        quantity: required(record, `vbid${index + 1}`),
+      })),
+      asks: Array.from({ length: depth }, (_, index) => ({
+        price: required(record, `pask${index + 1}`),
+        quantity: required(record, `vask${index + 1}`),
+      })),
       totalBidQuantity: optional(record, "bvol"),
       totalAskQuantity: optional(record, "avol"),
       occurredAt: null,
       providerDate: optional(record, "xymd"),
       providerTime: optional(record, "xhms"),
       source: "KIS_WS",
-    }),
-  );
+    });
+  });
 }

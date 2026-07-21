@@ -7,7 +7,6 @@ import {
   type ChangeEvent,
   type KeyboardEvent,
   type PointerEvent,
-  type WheelEvent,
 } from "react";
 
 import "./MarketChart.css";
@@ -20,6 +19,7 @@ import {
   formatChartTimeAxisLabel,
 } from "./chart-time-axis.js";
 import { resolveChartCandleGeometry } from "./chart-candle-geometry.js";
+import { truncateUsPrice, truncateUsPriceNumber } from "../../model/price-display.js";
 import {
   fullChartViewport,
   normalizeChartViewport,
@@ -366,6 +366,7 @@ export function MarketChart({
     readonly clientX: number;
     readonly viewport: ChartViewport;
   } | null>(null);
+  const chartCanvasRef = useRef<SVGSVGElement | null>(null);
   const [isDragging, setIsDragging] = useState(false);
 
   useEffect(() => {
@@ -641,23 +642,21 @@ export function MarketChart({
     setIsDragging(false);
   };
 
-  const handleWheel = (event: WheelEvent<SVGSVGElement>) => {
-    if (sourceCandles.length === 0 || event.deltaY === 0) return;
-    const bounds = event.currentTarget.getBoundingClientRect();
-    const svgX = ((event.clientX - bounds.left) / bounds.width) * VIEW_WIDTH;
-    const svgY = ((event.clientY - bounds.top) / bounds.height) * VIEW_HEIGHT;
-    if (
-      svgX < plotStart ||
-      svgX > plotEnd ||
-      svgY < PRICE_TOP ||
-      svgY > TURNOVER_BOTTOM
-    ) {
-      return;
-    }
+  const handleWheel = (event: globalThis.WheelEvent) => {
+    if (event.deltaY === 0) return;
+    // The complete chart surface owns the wheel gesture.  In particular, a
+    // short series is right-aligned, so limiting this to the occupied candle
+    // area lets the same gesture scroll the surrounding workspace.
     event.preventDefault();
+    event.stopPropagation();
+    if (sourceCandles.length === 0) return;
+    const bounds = chartCanvasRef.current?.getBoundingClientRect();
+    if (!bounds) return;
+    if (bounds.width <= 0 || bounds.height <= 0) return;
+    const svgX = ((event.clientX - bounds.left) / bounds.width) * VIEW_WIDTH;
     const anchorRatio = Math.max(
       0,
-      Math.min(1, (svgX - plotStart) / (plotEnd - plotStart)),
+      Math.min(1, (svgX - PLOT_LEFT) / (PLOT_RIGHT - PLOT_LEFT)),
     );
     setViewport((current) =>
       zoomChartViewport(
@@ -670,6 +669,14 @@ export function MarketChart({
       ),
     );
   };
+
+  useEffect(() => {
+    const canvas = chartCanvasRef.current;
+    if (!canvas) return;
+    const listener = (event: globalThis.WheelEvent) => handleWheel(event);
+    canvas.addEventListener("wheel", listener, { passive: false });
+    return () => canvas.removeEventListener("wheel", listener);
+  });
 
   const handleChartKeyDown = (event: KeyboardEvent<SVGSVGElement>) => {
     if (usableCandles.length === 0) {
@@ -906,6 +913,7 @@ export function MarketChart({
         </div>
       ) : (
         <svg
+          ref={chartCanvasRef}
           className="market-chart__canvas"
           data-dragging={isDragging ? "true" : "false"}
           viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
@@ -923,7 +931,6 @@ export function MarketChart({
           onPointerLeave={() => {
             if (!isDragging) setHoveredIndex(null);
           }}
-          onWheel={handleWheel}
           onKeyDown={handleChartKeyDown}
         >
           <defs>
@@ -956,9 +963,7 @@ export function MarketChart({
                   y={y + 3}
                   textAnchor="start"
                 >
-                  {value.toLocaleString("ko-KR", {
-                    maximumFractionDigits: 2,
-                  })}
+                  {currency === "USD" ? truncateUsPriceNumber(value) : value.toLocaleString("ko-KR", { maximumFractionDigits: 2 })}
                 </text>
               </g>
             );
@@ -967,7 +972,7 @@ export function MarketChart({
           {previousCloseY !== null && previousCloseValue !== null ? (
             <g
               className="market-chart__reference market-chart__reference--close"
-              aria-label={`전일 종가 ${previousCloseValue.toLocaleString("ko-KR")}`}
+              aria-label={`전일 종가 ${currency === "USD" ? truncateUsPrice(previousClosePrice ?? "") : previousCloseValue.toLocaleString("ko-KR")}`}
             >
               <line
                 x1={PLOT_LEFT}
@@ -996,7 +1001,7 @@ export function MarketChart({
                   ) + 3
                 }
               >
-                전일 종가 {previousCloseValue.toLocaleString("ko-KR")}
+                전일 종가 {currency === "USD" ? truncateUsPrice(previousClosePrice ?? "") : previousCloseValue.toLocaleString("ko-KR")}
               </text>
             </g>
           ) : null}
@@ -1004,7 +1009,7 @@ export function MarketChart({
           {currentPriceY !== null && currentPriceValue !== null ? (
             <g
               className="market-chart__reference market-chart__reference--current"
-              aria-label={`${freshness === "LIVE" ? "현재가" : "마지막 가격"} ${currentPriceValue.toLocaleString("ko-KR")}`}
+              aria-label={`${freshness === "LIVE" ? "현재가" : "마지막 가격"} ${currency === "USD" ? truncateUsPrice(currentPrice ?? "") : currentPriceValue.toLocaleString("ko-KR")}`}
             >
               <line
                 x1={PLOT_LEFT}
@@ -1034,7 +1039,7 @@ export function MarketChart({
                 }
               >
                 {freshness === "LIVE" ? "현재가" : "마지막"}{" "}
-                {currentPriceValue.toLocaleString("ko-KR")}
+                {currency === "USD" ? truncateUsPrice(currentPrice ?? "") : currentPriceValue.toLocaleString("ko-KR")}
               </text>
             </g>
           ) : null}
@@ -1293,10 +1298,10 @@ export function MarketChart({
                     : ""}
                 </text>
                 <text x={10} y={38}>
-                  O {selectedCandle.open} · H {selectedCandle.high}
+                  O {currency === "USD" ? truncateUsPrice(selectedCandle.open) : selectedCandle.open} · H {currency === "USD" ? truncateUsPrice(selectedCandle.high) : selectedCandle.high}
                 </text>
                 <text x={10} y={58}>
-                  L {selectedCandle.low} · C {selectedCandle.close} {currency}
+                  L {currency === "USD" ? truncateUsPrice(selectedCandle.low) : selectedCandle.low} · C {currency === "USD" ? truncateUsPrice(selectedCandle.close) : selectedCandle.close} {currency}
                 </text>
                 <text x={10} y={78}>
                   거래량 {formatCompact(selectedCandle.volume)}

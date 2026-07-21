@@ -130,4 +130,6 @@ VI pause/resync, finalized auction print, 주입형 상·하한가/tick guard, D
 
 호가 UI는 중앙 KRX 10호가 배열, 왼쪽 로컬 모의매도, 오른쪽 로컬 모의매수로 구현됐다. 양쪽 주문은 현재 입력 수량과 선택 지정가를 사용하고 KIS 정규장 `LIVE` 및 SQLite `READY`가 아니면 잠긴다. renderer는 주문을 KIS에 보내지 않고 typed IPC를 통해 로컬 sidecar에만 전달한다.
 
-NXT 진단 경로는 `H0NXASP0`·`H0NXCNT0`·`H0NXMKO0`을 함께 구독한다. 2026-07-20 KIS paper에서 세 ACK, NXT 실제 호가 62필드와 체결 46필드를 확인했다. 공식 65필드와 관측 62필드는 별도 exact layout으로 파싱한다. NXT 장상태 11필드의 실제 frame과 코드 의미, per-venue projection, security-level 보유량 합산이 제품 runtime에 연결되기 전 NXT는 `DISPLAY_ONLY`이고 모의체결 대상이 아니다. 통합 `H0UNASP0/H0UNCNT0`은 실행 거래소 attribution이 없으므로 SOR·queue 체결 근거로 사용하지 않는다.
+NXT 제품 경로는 `H0NXASP0`·`H0NXCNT0`·`H0NXMKO0`을 함께 구독한다. 2026-07-21 KIS paper 장중 probe에서 세 ACK와 15초간 NXT 실제 호가 75건·체결 1,192건을 확인했다. 공식 65필드와 관측 62필드는 별도 exact layout으로 파싱한다. 세 채널 ACK와 최신 NXT 호가·체결을 실행 조건으로 삼고, 공식 프리 `08:00~08:50`, 메인 `09:00:30~15:20`, 애프터 체결 `15:40~20:00` 구간 밖에서는 fail closed한다. 장상태 채널은 상태 변경 frame을 검증하지만 매 구간 반복 송신을 가정하지 않는다. 동일 주식의 보유량은 security 수준에서 합산하고 신규 주문과 대기열은 실제 execution venue로 분리한다. 통합 `H0UNASP0/H0UNCNT0`은 실행 거래소 attribution이 없으므로 SOR·queue 체결 근거로 사용하지 않는다.
+
+미국 주식은 `HDFSASP0` 1호가와 `HDFSCNT0` 체결을 `NASDAQ/NYSE/AMEX`별로 구독한다. 미국 동부시간과 DST를 적용해 프리 `04:00~09:30`, 정규 `09:30~16:00`, 애프터 `16:00~20:00`을 구분하며 세 구간 모두 fresh한 양방향 1호가와 체결이 있을 때만 로컬 주문을 받는다. 계좌에는 USD 100,000(센트 단위 `10000000`)을 별도 불변 원장으로 넣고 미국 체결 원금·수수료는 USD minor unit으로 계산한다. 미국 매도에 국내 거래세를 적용하지 않는다.

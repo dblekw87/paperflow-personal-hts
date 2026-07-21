@@ -1,3 +1,4 @@
+import { RefreshCw } from "lucide-react";
 import { useId, useState, type KeyboardEvent } from "react";
 
 import type {
@@ -10,6 +11,8 @@ import { Badge } from "../atoms/index.js";
 
 export interface InvestorFlowPanelProps {
   readonly projection: DesktopInvestorFlowProjection | null;
+  readonly onRefresh: () => void;
+  readonly scope?: "BOTH" | "INSTRUMENT" | "MARKET";
 }
 
 type FlowView = "INSTRUMENT" | "MARKET";
@@ -39,7 +42,8 @@ function toneOf(projection: DesktopInvestorFlowProjection | null) {
 }
 
 function stateLabel(projection: DesktopInvestorFlowProjection | null): string {
-  if (projection === null || projection.state === "UNAVAILABLE") return "";
+  if (projection === null) return "대기";
+  if (projection.state === "UNAVAILABLE") return "미연결";
   if (projection.state === "READY") return "실데이터";
   if (projection.state === "PARTIAL") return "일부 수신";
   if (projection.state === "ERROR") return "오류";
@@ -71,7 +75,7 @@ function FlowValue({
   readonly unit: "KRW" | "SHARE";
 }) {
   if (value === null) {
-    return <span className="pt-investor-flow__missing" aria-label="데이터 없음" />;
+    return <span className="pt-investor-flow__missing" aria-label="데이터 없음">—</span>;
   }
   return (
     <span className={`pt-investor-flow__number ${signedDirection(value)}`}>
@@ -117,7 +121,7 @@ function FlowTable({
                       <small>원</small>
                     </span>
                   ) : (
-                    <span className="pt-investor-flow__missing" aria-label="데이터 없음" />
+                    <span className="pt-investor-flow__missing" aria-label="데이터 없음">—</span>
                   )}
                 </td>
                 <td>
@@ -129,7 +133,7 @@ function FlowTable({
                       <small>원</small>
                     </span>
                   ) : (
-                    <span className="pt-investor-flow__missing" aria-label="데이터 없음" />
+                    <span className="pt-investor-flow__missing" aria-label="데이터 없음">—</span>
                   )}
                 </td>
                 <td><FlowValue value={value?.netBuyAmount ?? null} unit="KRW" /></td>
@@ -157,14 +161,39 @@ function selectNextTab<T extends string>(
 }
 
 function statusText(projection: DesktopInvestorFlowProjection | null): string {
-  if (projection === null || projection.state === "UNAVAILABLE") return "";
+  if (projection === null) return "투자자 수급 조회를 아직 시작하지 못했습니다.";
   if (projection.state === "LOADING") return "투자자 수급 데이터를 조회하는 중입니다.";
   return projection.statusMessage;
 }
 
-export function InvestorFlowPanel({ projection }: InvestorFlowPanelProps) {
+function lastSuccessLabel(projection: DesktopInvestorFlowProjection | null): string {
+  if (projection?.fetchedAt === null || projection?.fetchedAt === undefined) {
+    return "마지막 성공 시각 없음";
+  }
+  return `마지막 성공 ${new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(new Date(projection.fetchedAt))}`;
+}
+
+export function InvestorFlowPanel({
+  projection,
+  onRefresh,
+  scope = "BOTH",
+}: InvestorFlowPanelProps) {
   const id = useId();
-  const [view, setView] = useState<FlowView>("INSTRUMENT");
+  const [selectedView, setView] = useState<FlowView>("INSTRUMENT");
+  const view: FlowView =
+    scope === "MARKET"
+      ? "MARKET"
+      : scope === "INSTRUMENT"
+        ? "INSTRUMENT"
+        : selectedView;
   const [market, setMarket] = useState<FlowMarket>("KOSPI");
   const instrument = projection?.instrument ?? null;
   const marketProjection: DesktopMarketInvestorFlowProjection | null =
@@ -173,6 +202,7 @@ export function InvestorFlowPanel({ projection }: InvestorFlowPanelProps) {
     ...(instrument?.investorSummary?.participants ?? []),
     ...(instrument?.programSummary ? [instrument.programSummary.participant] : []),
   ];
+  const isLoading = projection?.state === "LOADING";
 
   return (
     <section className="pt-panel pt-investor-flow" aria-labelledby={`${id}-title`}>
@@ -181,12 +211,22 @@ export function InvestorFlowPanel({ projection }: InvestorFlowPanelProps) {
           <p className="pt-eyebrow">INVESTOR FLOW</p>
           <h2 id={`${id}-title`}>투자자 수급</h2>
         </div>
-        {stateLabel(projection) ? (
+        <div className="pt-investor-flow__actions">
+          <span>{lastSuccessLabel(projection)}</span>
           <Badge tone={toneOf(projection)}>{stateLabel(projection)}</Badge>
-        ) : null}
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={isLoading}
+            aria-label="투자자 수급 새로고침"
+          >
+            <RefreshCw aria-hidden="true" />
+            {isLoading ? "조회 중" : "새로고침"}
+          </button>
+        </div>
       </div>
 
-      <div className="pt-investor-flow__tabs" role="tablist" aria-label="수급 범위">
+      {scope === "BOTH" ? <div className="pt-investor-flow__tabs" role="tablist" aria-label="수급 범위">
         {(["INSTRUMENT", "MARKET"] as const).map((tab) => (
           <button
             key={tab}
@@ -204,7 +244,7 @@ export function InvestorFlowPanel({ projection }: InvestorFlowPanelProps) {
             {tab === "INSTRUMENT" ? "종목별" : "시장별"}
           </button>
         ))}
-      </div>
+      </div> : null}
 
       {view === "INSTRUMENT" ? (
         <div

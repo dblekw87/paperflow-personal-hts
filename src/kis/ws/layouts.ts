@@ -217,6 +217,24 @@ export const US_TRADE_FIELDS = [
   "MTYP",
 ] as const;
 
+// KIS prod emits RSYM ahead of the older published layouts. HDFSASP0 also
+// extends the one-level quote with levels 2..10 (six values per level).
+// This exact 71-field shape was observed on 2026-07-21.
+export const US_ORDERBOOK_OBSERVED_FIELDS = [
+  "rsym",
+  ...US_ORDERBOOK_FIELDS,
+  ...Array.from({ length: 9 }, (_, index) => index + 2).flatMap((level) => [
+    `pbid${level}`,
+    `pask${level}`,
+    `vbid${level}`,
+    `vask${level}`,
+    `dbid${level}`,
+    `dask${level}`,
+  ]),
+] as readonly string[];
+
+export const US_TRADE_OBSERVED_FIELDS = ["RSYM", ...US_TRADE_FIELDS] as const;
+
 export const KIS_WS_LAYOUTS = {
   [KIS_TR.domesticOrderBook]: DOMESTIC_ORDERBOOK_FIELDS,
   [KIS_TR.domesticTrade]: DOMESTIC_TRADE_FIELDS,
@@ -255,6 +273,18 @@ export function resolveWsLayout(
     fieldsPerRecord === NXT_ORDERBOOK_PAPER_FIELDS.length
   ) {
     return NXT_ORDERBOOK_PAPER_FIELDS;
+  }
+  if (
+    trId === KIS_TR.usOrderBook &&
+    fieldsPerRecord === US_ORDERBOOK_OBSERVED_FIELDS.length
+  ) {
+    return US_ORDERBOOK_OBSERVED_FIELDS;
+  }
+  if (
+    trId === KIS_TR.usTrade &&
+    fieldsPerRecord === US_TRADE_OBSERVED_FIELDS.length
+  ) {
+    return US_TRADE_OBSERVED_FIELDS;
   }
   return null;
 }

@@ -3,6 +3,7 @@ import type { CSSProperties } from "react";
 import { Badge, PriceText } from "../atoms";
 import type { PriceDirection } from "../atoms";
 import { Status } from "../molecules";
+import { truncateUsPrice } from "../../model/price-display.js";
 
 export interface OrderBookLevelModel {
   price: string;
@@ -10,6 +11,7 @@ export interface OrderBookLevelModel {
   changeRate: string;
   direction: PriceDirection;
   depthBand: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
+  referenceOnly?: boolean;
 }
 
 export interface RecentTradeModel {
@@ -68,6 +70,7 @@ interface LevelRowsProps {
   recentTrades: readonly RecentTradeModel[];
   referenceStats: readonly OrderBookReferenceStat[];
   pendingOrders: NonNullable<OrderBookPanelProps["pendingOrders"]>;
+  isUsPriceDisplay: boolean;
 }
 
 function normalizedPrice(value: string): string {
@@ -189,8 +192,10 @@ function LevelRows({
   recentTrades,
   referenceStats,
   pendingOrders,
+  isUsPriceDisplay,
 }: LevelRowsProps) {
   return levels.map((level, index) => {
+    const canOrderAtLevel = canOrder && level.referenceOnly !== true;
     const isCurrentPrice =
       normalizedPrice(level.price) !== "" &&
       normalizedPrice(level.price) === normalizedPrice(currentPrice);
@@ -200,15 +205,15 @@ function LevelRows({
     <tr
       className={`pt-order-book__row pt-order-book__row--${side.toLowerCase()} pt-depth--${level.depthBand}${isCurrentPrice ? " pt-order-book__row--current" : ""}`}
       key={`${side}:${level.price}`}
-      aria-disabled={!canOrder}
+      aria-disabled={!canOrderAtLevel}
       aria-current={isCurrentPrice ? "true" : undefined}
       data-current-price={isCurrentPrice ? "true" : undefined}
     >
       <td className="pt-order-book__action-cell pt-order-book__action-cell--sell">
         <button
           type="button"
-          disabled={!canOrder}
-          title={canOrder ? `${level.price}원에 매도 · ${side === "BID" ? "즉시체결 예상" : "체결 대기 예상"}` : disabledReason}
+          disabled={!canOrderAtLevel}
+          title={canOrderAtLevel ? `${level.price}에 매도 · ${side === "BID" ? "즉시체결 예상" : "체결 대기 예상"}` : level.referenceOnly ? "참고 가격대는 실제 잔량이 없어 주문 근거로 사용하지 않습니다." : disabledReason}
           aria-label={`${level.price}원 입력 수량 매도`}
         onClick={() => onLevelOrder("SELL", level.price)}
         className={sellPending ? "has-pending-order" : undefined}
@@ -231,7 +236,7 @@ function LevelRows({
         </td>
       ) : null}
       <td className="pt-order-book__price">
-        <PriceText value={level.price} direction={level.direction} />{" "}
+        <PriceText value={isUsPriceDisplay ? truncateUsPrice(level.price) : level.price} direction={level.direction} />{" "}
         <span className={`pt-order-book__rate ${level.direction}`}>
           ({level.changeRate === "—" ? "—" : `${level.changeRate}%`})
         </span>
@@ -254,8 +259,8 @@ function LevelRows({
       <td className="pt-order-book__action-cell pt-order-book__action-cell--buy">
         <button
           type="button"
-          disabled={!canOrder}
-          title={canOrder ? `${level.price}원에 매수 · ${side === "ASK" ? "즉시체결 예상" : "체결 대기 예상"}` : disabledReason}
+          disabled={!canOrderAtLevel}
+          title={canOrderAtLevel ? `${level.price}에 매수 · ${side === "ASK" ? "즉시체결 예상" : "체결 대기 예상"}` : level.referenceOnly ? "참고 가격대는 실제 잔량이 없어 주문 근거로 사용하지 않습니다." : disabledReason}
           aria-label={`${level.price}원 입력 수량 매수`}
           onClick={() => onLevelOrder("BUY", level.price)}
           className={buyPending ? "has-pending-order" : undefined}
@@ -387,6 +392,7 @@ export function OrderBookPanel({
                 recentTrades={recentTrades}
                 referenceStats={referenceStats}
                 pendingOrders={pendingOrders}
+                isUsPriceDisplay={/^(NASDAQ|NYSE|AMEX):/.test(instrumentId)}
               />
               <LevelRows
                 levels={bids}
@@ -399,6 +405,7 @@ export function OrderBookPanel({
                 recentTrades={recentTrades}
                 referenceStats={referenceStats}
                 pendingOrders={pendingOrders}
+                isUsPriceDisplay={/^(NASDAQ|NYSE|AMEX):/.test(instrumentId)}
               />
             </tbody>
             <tfoot>

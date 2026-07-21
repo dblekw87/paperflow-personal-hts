@@ -25,7 +25,7 @@ REST 값은 새로 수신되어도 `DELAYED_OR_POLLING`으로 표시하며 WebSo
 | 화면 자산                      | 의미                           | KIS 수집 방식                 | 확인된 채널                                | 제품 상태                                   |
 | ------------------------------ | ------------------------------ | ----------------------------- | ------------------------------------------ | ------------------------------------------- |
 | KOSPI·KOSDAQ·KOSPI200 현물지수 | 국내 현물 시장 지수            | WebSocket + REST snapshot     | 국내지수 실시간체결 계열                   | 실시간 대상                                 |
-| 국내 주식 NXT                  | 대체거래소 10호가·체결·장상태  | WebSocket                     | `H0NXASP0`, `H0NXCNT0`, `H0NXMKO0`         | 진단 검증 완료, 제품 UI는 표시 전용 연결 전 |
+| 국내 주식 NXT                  | 대체거래소 10호가·체결·장상태  | WebSocket                     | `H0NXASP0`, `H0NXCNT0`, `H0NXMKO0`         | 제품 runtime·로컬 모의체결 연결             |
 | KOSPI200 주간 지수선물         | KRX 정규 주간장 선물 실제 월물 | WebSocket 체결·호가 + REST    | `H0IFCNT0`, `H0IFASP0`                     | 실시간 대상, 공식 샘플상 실전 환경 전용     |
 | KRX 야간 KOSPI200 선물         | KRX 야간 선물 실제 월물        | WebSocket 체결·호가 + REST    | `H0MFCNT0`, `H0MFASP0`                     | 실시간 대상, 장중 권한 검증 필요            |
 | NASDAQ 상장 주식·ETF           | NASDAQ 거래소 개별 주식·ETF    | WebSocket 체결·호가 + REST    | 해외주식 `HDFSCNT0`, `HDFSASP0`            | 기존 실시간 대상                            |
@@ -69,7 +69,7 @@ KIS 공식 범위에서 Nasdaq Composite/NDX 지수는 REST 분봉 polling이며
 - 2026-07-20 KIS paper의 삼성전자 진단에서 세 구독 ACK가 모두 성공했고 15초 동안 호가·체결 333 records를 schema 오류 없이 수신했다.
 - 공식 NXT 호가는 65필드지만 같은 모의 환경에서 62필드가 관측됐다. 두 exact layout 외 필드 수는 fail closed한다.
 - 통합 `H0UNASP0/H0UNCNT0`은 시장 전체 표시·스캐너 용도다. 호가 단계와 체결의 실제 실행 거래소 attribution이 없어 NXT/KRX queue나 SOR 모의체결의 근거로 사용하지 않는다.
-- 동일 주식의 보유량은 security 수준에서 합산하되 주문·체결·queue·sequence는 execution venue별로 분리해야 한다. 이 storage/projection migration과 NXT 장상태 canonical adapter가 끝날 때까지 NXT 주문은 잠근다.
+- 동일 주식의 보유량은 `KRX:{종목코드}` security identity로 합산하고 주문·체결·queue·sequence와 session key는 execution venue별로 분리한다. 제품 runtime은 KRX와 NXT 전용 채널을 동시에 구독하며 NXT 장상태 채널까지 세 구독 ACK가 성공하고 NXT 호가·체결이 모두 최신일 때만 공식 프리·애프터마켓 시간의 로컬 모의체결을 연다. 장상태 변경 frame이 도착하면 계속 검증하되, 상태 변경이 없는 동안 해당 frame이 반복 송신된다고 가정하지 않는다. 통합 tape는 체결 근거로 쓰지 않는다.
 
 ## 3. 권한과 환경 분리
 

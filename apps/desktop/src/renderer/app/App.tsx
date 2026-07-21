@@ -39,6 +39,7 @@ import {
 import { applyLiveTradeToCandles } from "../features/chart/live-candle-overlay.js";
 import {
   buildReferencePriceLadder,
+  buildUsOneLevelPriceLadder,
   type DomesticEquityMarket,
   type DomesticSecurityType,
 } from "../features/orderbook/reference-price-ladder.js";
@@ -58,11 +59,16 @@ import {
   buildLiveThemeLeaders,
 } from "../model/live-dashboard-insights.js";
 import type {
+  DesktopInformationItemProjection,
   DesktopInstrumentSearchItemProjection,
   DesktopRankingSort,
 } from "../../shared/desktop-contracts.js";
-import { isSearchableDomesticInstrumentQuery } from "../../shared/desktop-contracts.js";
+import {
+  isSearchableDomesticInstrumentQuery,
+  isSearchableUsInstrumentQuery,
+} from "../../shared/desktop-contracts.js";
 import { valuePaperPosition } from "../../shared/paper-valuation.js";
+import { truncateUsPrice } from "../model/price-display.js";
 
 type ThemePreference = "system" | "dark" | "light";
 type WatchlistQuoteSnapshot = {
@@ -271,18 +277,25 @@ const initialMarkers: PaperFillMarkerViewModel[] = [
 const initialIndicators: ChartIndicatorViewModel[] = [
   { id: "price-sma-5", source: "PRICE", kind: "SMA", period: 5, visible: true },
   {
-    id: "price-ema-20",
+    id: "price-sma-20",
     source: "PRICE",
-    kind: "EMA",
+    kind: "SMA",
     period: 20,
     visible: true,
   },
   {
-    id: "volume-sma-10",
-    source: "VOLUME",
+    id: "price-sma-60",
+    source: "PRICE",
     kind: "SMA",
-    period: 10,
-    visible: false,
+    period: 60,
+    visible: true,
+  },
+  {
+    id: "price-sma-120",
+    source: "PRICE",
+    kind: "SMA",
+    period: 120,
+    visible: true,
   },
 ];
 
@@ -396,6 +409,16 @@ function formatWholeNumber(value: string | null, fallback: string): string {
   return BigInt(value).toLocaleString("ko-KR");
 }
 
+function formatMarketPrice(
+  value: string | null,
+  currency: string,
+  fallback: string,
+): string {
+  if (value === null) return fallback;
+  if (currency === "KRW") return formatWholeNumber(value, fallback);
+  return truncateUsPrice(value, fallback);
+}
+
 function marketDirection(
   changeRate: string | null | undefined,
 ): "positive" | "negative" | "flat" {
@@ -437,11 +460,33 @@ function parseWholeNumberInput(value: string): bigint {
   return /^(?:0|[1-9]\d*)$/.test(normalized) ? BigInt(normalized) : 0n;
 }
 
+function normalizePriceInput(value: string, currency: string): string | null {
+  const normalized = value.replaceAll(",", "").trim();
+  const pattern = currency === "USD"
+    ? /^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/
+    : /^(?:0|[1-9]\d*)$/;
+  return pattern.test(normalized) && normalized !== "0" ? normalized : null;
+}
+
+function formatCashMinor(value: string | null | undefined, currency: string): string {
+  if (value === null || value === undefined || !/^-?\d+$/.test(value)) return "—";
+  if (currency === "USD") {
+    const negative = value.startsWith("-");
+    const digits = negative ? value.slice(1) : value;
+    const padded = digits.padStart(3, "0");
+    const whole = padded.slice(0, -2);
+    const fraction = padded.slice(-2);
+    return `${negative ? "-" : ""}$${Number(whole).toLocaleString("en-US")}.${fraction}`;
+  }
+  return `₩${BigInt(value).toLocaleString("ko-KR")}`;
+}
+
 function informationProviderLabel(provider: string): string {
   return (
     {
       KIS_DOMESTIC_NEWS: "KIS 국내뉴스",
       KIS_OVERSEAS_NEWS: "KIS 미국뉴스",
+      FINNHUB_NEWS: "Finnhub 미국뉴스",
       SEC_EDGAR: "SEC EDGAR",
       OPEN_DART: "OpenDART",
     }[provider] ?? provider
@@ -525,12 +570,27 @@ export function App() {
     useState<WorkspacePage>("DASHBOARD");
   const [rankingSort, setRankingSort] =
     useState<DesktopRankingSort>("TURNOVER");
+  const [informationScope, setInformationScope] = useState<
+    "ALL" | "SELECTED" | "WATCHLIST"
+  >("ALL");
+  const [informationProvider, setInformationProvider] = useState<string | null>(
+    null,
+  );
+  const [selectedInformationItem, setSelectedInformationItem] =
+    useState<DesktopInformationItemProjection | null>(null);
   const [selectedInstrument, setSelectedInstrument] = useState<{
     readonly symbol: string;
     readonly name: string;
     readonly market: DomesticEquityMarket | null;
     readonly securityType: DomesticSecurityType | null;
   } | null>(null);
+  const [workspaceInstruments, setWorkspaceInstruments] = useState<readonly {
+    readonly symbol: string;
+    readonly name: string;
+    readonly market: DomesticEquityMarket | null;
+    readonly securityType: DomesticSecurityType | null;
+    readonly selection?: string;
+  }[]>([]);
   const [instrumentQuery, setInstrumentQuery] = useState("");
   const [instrumentSearchOpen, setInstrumentSearchOpen] = useState(false);
   const [instrumentSearchLoading, setInstrumentSearchLoading] = useState(false);
@@ -583,6 +643,54 @@ export function App() {
   }, [hasDesktopRuntime, watchlist]);
 
   useEffect(() => {
+    const api = window.paperTradingDesktop;
+    if (!hasDesktopRuntime || !api || watchlist.length === 0) return;
+    const domesticSymbols = watchlist
+      .filter((item) => item.instrumentId.startsWith("KRX:"))
+      .map((item) => item.symbol);
+    if (domesticSymbols.length === 0) return;
+    let active = true;
+    void api.market
+      .getWatchlistQuotes(domesticSymbols)
+      .then((quotes) => {
+        if (!active) return;
+        setWatchlistQuotes((current) => {
+          const next = new Map(current);
+          for (const quote of quotes) {
+            next.set(quote.instrumentId, {
+              price: formatWholeNumber(quote.price, "—"),
+              changeRate: quote.changeRate,
+              direction: marketDirection(quote.changeRate),
+              turnover: formatKrwTurnoverEok(quote.cumulativeTurnover, "—"),
+              freshness: "stale",
+            });
+          }
+          return next;
+        });
+      })
+      .catch(() => {
+        // Per-symbol placeholders remain visible when the read-only provider is unavailable.
+      });
+    return () => {
+      active = false;
+    };
+  }, [hasDesktopRuntime, watchlist]);
+
+  useEffect(() => {
+    setInformationProvider(null);
+    setSelectedInformationItem(null);
+  }, [selectedMarket]);
+
+  useEffect(() => {
+    if (selectedInformationItem === null) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSelectedInformationItem(null);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [selectedInformationItem]);
+
+  useEffect(() => {
     document.documentElement.dataset.theme = effectiveTheme;
     localStorage.setItem("papertrading:theme", themePreference);
   }, [effectiveTheme, themePreference]);
@@ -628,9 +736,12 @@ export function App() {
   useEffect(() => {
     const query = instrumentQuery.trim();
     setInstrumentSearchIndex(0);
+    const searchable = selectedMarket === "미국"
+      ? isSearchableUsInstrumentQuery(query)
+      : isSearchableDomesticInstrumentQuery(query);
     if (
       !hasDesktopRuntime ||
-      !isSearchableDomesticInstrumentQuery(query)
+      !searchable
     ) {
       setInstrumentSearchLoading(false);
       return;
@@ -638,7 +749,10 @@ export function App() {
     setInstrumentSearchLoading(true);
     let active = true;
     const timer = window.setTimeout(() => {
-      void desktop.searchDomesticInstruments(query).finally(() => {
+      const request = selectedMarket === "미국"
+        ? desktop.searchUsInstruments(query)
+        : desktop.searchDomesticInstruments(query);
+      void request.finally(() => {
         if (active) setInstrumentSearchLoading(false);
       });
     }, 180);
@@ -648,8 +762,10 @@ export function App() {
     };
   }, [
     desktop.searchDomesticInstruments,
+    desktop.searchUsInstruments,
     hasDesktopRuntime,
     instrumentQuery,
+    selectedMarket,
   ]);
 
   useEffect(() => {
@@ -698,16 +814,17 @@ export function App() {
   useEffect(() => {
     if (!hasDesktopRuntime) return;
     if (workspacePage === "DASHBOARD") {
-      void desktop.loadDomesticRanking("TURNOVER");
+      void desktop.loadRanking(selectedMarket === "미국" ? "US" : "KRX", "TURNOVER");
       return;
     }
     if (workspacePage === "RANKINGS") {
-      void desktop.loadDomesticRanking(rankingSort);
+      void desktop.loadRanking(selectedMarket === "미국" ? "US" : "KRX", rankingSort);
     }
   }, [
-    desktop.loadDomesticRanking,
+    desktop.loadRanking,
     hasDesktopRuntime,
     rankingSort,
+    selectedMarket,
     workspacePage,
   ]);
 
@@ -725,7 +842,9 @@ export function App() {
     return () => window.clearInterval(timer);
   }, [
     desktop.loadInformationFeed,
+    desktop.market?.instrumentId,
     hasDesktopRuntime,
+    selectedMarket,
     workspacePage,
   ]);
 
@@ -749,7 +868,13 @@ export function App() {
     desktop.market.connectionState === "LIVE" &&
     desktop.market.freshness === "live";
   const isRegularPaperSession =
-    isKisLive && desktop.market?.session === "REGULAR";
+    isKisLive &&
+    (desktop.market?.session === "REGULAR" ||
+      (desktop.market?.venue === "NXT" &&
+        (desktop.market.session === "PRE" ||
+          desktop.market.session === "AFTER")) ||
+      (["NASDAQ", "NYSE", "AMEX"].includes(desktop.market?.venue ?? "") &&
+        (desktop.market?.session === "PRE" || desktop.market?.session === "AFTER")));
   const activeSymbol = desktop.market?.symbol || "005930";
   const activeInstrumentId =
     desktop.market?.instrumentId ?? `KRX:${activeSymbol}`;
@@ -758,14 +883,22 @@ export function App() {
       ? selectedInstrument.name
       : domesticInstrumentName(activeSymbol);
   const activeCurrency = desktop.market?.currency ?? "KRW";
+  const isUsSelection = selectedMarket === "미국";
+  const isUsMarket = ["NASDAQ", "NYSE", "AMEX"].includes(
+    desktop.market?.venue ?? "",
+  );
   const sessionLabel = (() => {
     switch (desktop.market?.session) {
       case "PRE":
-        return "장전";
+        return ["NASDAQ", "NYSE", "AMEX"].includes(desktop.market?.venue ?? "")
+          ? "미국 프리마켓"
+          : desktop.market?.venue === "NXT" ? "NXT 프리마켓" : "장전";
       case "REGULAR":
         return "정규장";
       case "AFTER":
-        return "장후";
+        return ["NASDAQ", "NYSE", "AMEX"].includes(desktop.market?.venue ?? "")
+          ? "미국 애프터마켓"
+          : desktop.market?.venue === "NXT" ? "NXT 애프터마켓" : "장후";
       case "CLOSED":
         return "장마감";
       default:
@@ -776,12 +909,14 @@ export function App() {
             : "fixture 정규장";
     }
   })();
-  const displayPrice = formatWholeNumber(
+  const displayPrice = formatMarketPrice(
     desktop.market?.price ?? null,
+    activeCurrency,
     hasDesktopRuntime ? "—" : "84,700",
   );
-  const displayChange = formatWholeNumber(
+  const displayChange = formatMarketPrice(
     desktop.market?.change ?? null,
+    activeCurrency,
     hasDesktopRuntime ? "—" : "+1,700",
   );
   const displayChangeRate =
@@ -851,6 +986,36 @@ export function App() {
       ? ("STOCK" as const)
       : null;
   })();
+  useEffect(() => {
+    if (!hasDesktopRuntime || !activeSymbol) return;
+    setWorkspaceInstruments((current) =>
+      current.some((item) => item.symbol === activeSymbol)
+        ? current
+        : [
+            ...current,
+            {
+              symbol: activeSymbol,
+              name: activeInstrumentName,
+              market: activeDomesticMarket,
+              securityType: activeSecurityType,
+              selection: desktop.market?.venue === "NASDAQ"
+                ? `NAS:${activeSymbol}`
+                : desktop.market?.venue === "NYSE"
+                  ? `NYS:${activeSymbol}`
+                  : desktop.market?.venue === "AMEX"
+                    ? `AMS:${activeSymbol}`
+                    : activeSymbol,
+            },
+          ],
+    );
+  }, [
+    activeDomesticMarket,
+    activeInstrumentName,
+    activeSecurityType,
+    activeSymbol,
+    desktop.market?.venue,
+    hasDesktopRuntime,
+  ]);
   const watched = watchlist.some(
     (item) => item.instrumentId === activeInstrumentId,
   );
@@ -882,6 +1047,19 @@ export function App() {
       }),
     [activeDomesticMarket, activeSecurityType, chartCurrentPrice, chartPreviousClosePrice],
   );
+  const isUsOneLevelBook =
+    ["NASDAQ", "NYSE", "AMEX"].includes(desktop.market?.venue ?? "") &&
+    desktop.market?.asks.length === 1 && desktop.market?.bids.length === 1;
+  const usPriceLadder = useMemo(
+    () => buildUsOneLevelPriceLadder({
+      bestAskPrice: desktop.market?.asks[0]?.price ?? null,
+      bestAskQuantity: desktop.market?.asks[0]?.quantity ?? null,
+      bestBidPrice: desktop.market?.bids[0]?.price ?? null,
+      bestBidQuantity: desktop.market?.bids[0]?.quantity ?? null,
+      previousClosePrice: chartPreviousClosePrice,
+    }),
+    [desktop.market?.asks, desktop.market?.bids, chartPreviousClosePrice],
+  );
   const isReferenceOrderBook =
     hasDesktopRuntime &&
     !hasLastOrderBook &&
@@ -889,7 +1067,9 @@ export function App() {
     referencePriceLadder.bids.length > 0;
   const displayedAsks = useMemo(
     () =>
-      desktop.market && desktop.market.asks.length > 0
+      isUsOneLevelBook
+        ? usPriceLadder.asks
+        : desktop.market && desktop.market.asks.length > 0
         ? desktop.market.asks.slice(0, 10).reverse().map((level, index) => ({
             price: formatWholeNumber(level.price, level.price),
             quantity: formatWholeNumber(level.quantity, level.quantity),
@@ -900,11 +1080,13 @@ export function App() {
         : hasDesktopRuntime
           ? referencePriceLadder.asks
           : asks,
-    [desktop.market, chartPreviousClosePrice, hasDesktopRuntime, referencePriceLadder.asks],
+    [desktop.market, chartPreviousClosePrice, hasDesktopRuntime, isUsOneLevelBook, referencePriceLadder.asks, usPriceLadder.asks],
   );
   const displayedBids = useMemo(
     () =>
-      desktop.market && desktop.market.bids.length > 0
+      isUsOneLevelBook
+        ? usPriceLadder.bids
+        : desktop.market && desktop.market.bids.length > 0
         ? desktop.market.bids.slice(0, 10).map((level, index) => ({
             price: formatWholeNumber(level.price, level.price),
             quantity: formatWholeNumber(level.quantity, level.quantity),
@@ -915,7 +1097,7 @@ export function App() {
         : hasDesktopRuntime
           ? referencePriceLadder.bids
           : bids,
-    [desktop.market, chartPreviousClosePrice, hasDesktopRuntime, referencePriceLadder.bids],
+    [desktop.market, chartPreviousClosePrice, hasDesktopRuntime, isUsOneLevelBook, referencePriceLadder.bids, usPriceLadder.bids],
   );
   const hasKisHistory =
     desktop.chart?.state === "READY" &&
@@ -1004,7 +1186,7 @@ export function App() {
         : null;
     const priceStat = (label: string, value: string | null, dividerBefore = false) => ({
       label,
-      value: formatWholeNumber(value, "—"),
+      value: isUsSelection ? truncateUsPrice(value ?? "", "—") : formatWholeNumber(value, "—"),
       direction: orderBookLevelChange(value ?? "", chartPreviousClosePrice).direction,
       dividerBefore,
     });
@@ -1027,7 +1209,7 @@ export function App() {
       { label: "어제보다", value: "—", direction: "flat" as const },
       priceStat("중간호가", midpoint, true),
     ];
-  }, [chartPreviousClosePrice, desktop.market, displayedCandles]);
+  }, [chartPreviousClosePrice, desktop.market, displayedCandles, isUsSelection]);
   const activePosition = desktop.account?.positions.find(
     (position) => position.instrumentId === activeInstrumentId,
   );
@@ -1062,21 +1244,65 @@ export function App() {
     () => buildLiveThemeLeaders(desktop.ranking),
     [desktop.ranking],
   );
+  const marketScopedInformationFeed = useMemo(() => {
+    const feed = desktop.informationFeed;
+    if (feed === null) return null;
+    const providers = new Set(
+      isUsSelection
+        ? ["KIS_OVERSEAS_NEWS", "FINNHUB_NEWS", "SEC_EDGAR"]
+        : ["KIS_DOMESTIC_NEWS", "OPEN_DART"],
+    );
+    const items = feed.items.filter((item) => providers.has(item.provider));
+    const sources = feed.sources.filter((source) => providers.has(source.provider));
+    const readyCount = sources.filter((source) => source.state === "READY").length;
+    return {
+      ...feed,
+      items,
+      sources,
+      statusMessage: `${isUsSelection ? "미국" : "국내"} ${readyCount}개 provider 연결 · 표시 ${items.length}건`,
+    };
+  }, [desktop.informationFeed, isUsSelection]);
   const liveInformationProjection = useMemo(
     () =>
       buildLiveInformationInsights(
-        desktop.informationFeed,
+        marketScopedInformationFeed,
         activeInstrumentId,
         activeInstrumentName,
       ),
     [
       activeInstrumentId,
       activeInstrumentName,
-      desktop.informationFeed,
+      marketScopedInformationFeed,
     ],
   );
+  const visibleInformationItems = useMemo(() => {
+    const providerItems = (marketScopedInformationFeed?.items ?? []).filter(
+      (item) =>
+        informationProvider === null || item.provider === informationProvider,
+    );
+    if (informationScope === "ALL") return providerItems;
+    const instrumentIds =
+      informationScope === "SELECTED"
+        ? new Set([activeInstrumentId])
+        : new Set(watchlist.map((item) => item.instrumentId));
+    return providerItems.filter((item) =>
+      item.relatedInstrumentIds.some((id) => instrumentIds.has(id)),
+    );
+  }, [
+    activeInstrumentId,
+    marketScopedInformationFeed?.items,
+    informationScope,
+    informationProvider,
+    watchlist,
+  ]);
   const sidebarInstruments = hasDesktopRuntime
-    ? watchlist.map((item) => {
+    ? watchlist
+      .filter((item) =>
+        selectedMarket === "미국"
+          ? /^(?:NASDAQ|NYSE|AMEX):/.test(item.instrumentId)
+          : item.instrumentId.startsWith("KRX:"),
+      )
+      .map((item) => {
         const active = item.instrumentId === activeInstrumentId;
         const snapshot = watchlistQuotes.get(item.instrumentId);
         return {
@@ -1112,7 +1338,9 @@ export function App() {
       : "KIS 차트 응답 대기 중";
   const normalizedInstrumentQuery = instrumentQuery.trim();
   const visibleInstrumentSearchItems =
-    isSearchableDomesticInstrumentQuery(normalizedInstrumentQuery) &&
+    (selectedMarket === "미국"
+      ? isSearchableUsInstrumentQuery(normalizedInstrumentQuery)
+      : isSearchableDomesticInstrumentQuery(normalizedInstrumentQuery)) &&
     desktop.instrumentSearch?.query === normalizedInstrumentQuery
       ? desktop.instrumentSearch.items
       : [];
@@ -1120,28 +1348,47 @@ export function App() {
   const openSearchedInstrument = (
     item: DesktopInstrumentSearchItemProjection,
   ) => {
+    const isUs = ["NASDAQ", "NYSE", "AMEX"].includes(item.market);
+    const selection = item.market === "NASDAQ" ? `NAS:${item.symbol}`
+      : item.market === "NYSE" ? `NYS:${item.symbol}`
+      : item.market === "AMEX" ? `AMS:${item.symbol}` : item.symbol;
+    const workspaceItem = {
+      symbol: item.symbol,
+      name: item.name,
+      market: isUs ? null : item.market as DomesticEquityMarket,
+      securityType: item.securityType,
+      selection,
+    };
+    setWorkspaceInstruments((current) =>
+      current.some((candidate) => (candidate.selection ?? candidate.symbol) === selection)
+        ? current
+        : [...current, workspaceItem],
+    );
     setSelectedInstrument({
       symbol: item.symbol,
       name: item.name,
-      market: item.market,
+      market: isUs ? null : item.market as DomesticEquityMarket,
       securityType: item.securityType,
     });
+    setSelectedMarket(isUs ? "미국" : "국내");
     setWorkspacePage("DASHBOARD");
     setInstrumentQuery("");
     setInstrumentSearchOpen(false);
     setNotice(`${item.name}(${item.symbol}) 종목 화면을 여는 중입니다.`);
     instrumentSearchInput.current?.blur();
-    void desktop.selectInstrument(item.symbol);
+    void desktop.selectInstrument(selection).then((projection) => {
+      if (projection !== null) void desktop.loadChartHistory(interval, chartRange);
+    });
   };
 
   const numericQuantity = parseWholeNumberInput(draft.quantity);
 
   const submitPaperDraft = async (orderDraft: OrderTicketDraft) => {
-    const orderPrice = parseWholeNumberInput(orderDraft.limitPrice);
+    const orderPrice = normalizePriceInput(orderDraft.limitPrice, activeCurrency);
     const orderQuantity = parseWholeNumberInput(orderDraft.quantity);
     if (
       orderQuantity <= 0n ||
-      (orderDraft.orderType === "LIMIT" && orderPrice <= 0n)
+      (orderDraft.orderType === "LIMIT" && orderPrice === null)
     ) {
       setNotice("수량과 지정가를 올바르게 입력해 주세요.");
       return;
@@ -1160,7 +1407,7 @@ export function App() {
         orderType: orderDraft.orderType,
         quantity: orderQuantity.toString(),
         limitPrice:
-          orderDraft.orderType === "LIMIT" ? orderPrice.toString() : null,
+          orderDraft.orderType === "LIMIT" ? orderPrice : null,
       });
       if (result?.accepted) {
         playPaperOrderChime();
@@ -1238,10 +1485,30 @@ export function App() {
           <span className="sr-only">시장 선택</span>
           <select
             value={selectedMarket}
-            onChange={(event) => setSelectedMarket(event.target.value)}
+            onChange={(event) => {
+              const market = event.target.value;
+              setSelectedMarket(market);
+              if (hasDesktopRuntime && market === "미국") {
+                setSelectedInstrument({ symbol: "AAPL", name: "Apple", market: null, securityType: "STOCK" });
+                setWorkspacePage("DASHBOARD");
+                setDraft((current) => ({ ...current, limitPrice: "" }));
+                setNotice("Apple(AAPL) 미국 3개 세션 실시간 시세를 연결하는 중입니다.");
+                void desktop.selectInstrument("NAS:AAPL").then((projection) => {
+                  if (projection !== null) void desktop.loadChartHistory(interval, chartRange);
+                });
+              } else if (hasDesktopRuntime && market === "국내" && ["NASDAQ", "NYSE", "AMEX"].includes(desktop.market?.venue ?? "")) {
+                setSelectedInstrument({ symbol: "005930", name: "삼성전자", market: "KOSPI", securityType: "STOCK" });
+                setWorkspacePage("DASHBOARD");
+                setDraft((current) => ({ ...current, limitPrice: "" }));
+                setNotice("삼성전자(005930) 국내 통합 시세를 연결하는 중입니다.");
+                void desktop.selectInstrument("005930").then((projection) => {
+                  if (projection !== null) void desktop.loadChartHistory(interval, chartRange);
+                });
+              }
+            }}
           >
             <option>국내</option>
-            <option disabled={hasDesktopRuntime}>미국 · 연결 준비 중</option>
+            <option>미국</option>
             <option disabled={hasDesktopRuntime}>
               글로벌 선행지표 · 연결 준비 중
             </option>
@@ -1259,8 +1526,8 @@ export function App() {
             ref={instrumentSearchInput}
             type="search"
             value={instrumentQuery}
-            placeholder="종목명 · 종목코드 검색"
-            aria-label="국내 종목 검색"
+            placeholder={selectedMarket === "미국" ? "미국 티커 (예: AAPL, NYS:IBM)" : "종목명 · 종목코드 검색"}
+            aria-label={selectedMarket === "미국" ? "미국 종목 티커 검색" : "국내 종목 검색"}
             aria-autocomplete="list"
             aria-controls="domestic-instrument-search-results"
             aria-expanded={
@@ -1303,18 +1570,18 @@ export function App() {
               className="global-search__results"
               id="domestic-instrument-search-results"
               role="listbox"
-              aria-label="국내 종목 검색 결과"
+              aria-label={selectedMarket === "미국" ? "미국 종목 검색 결과" : "국내 종목 검색 결과"}
             >
               <div className="global-search__status">
-                {!isSearchableDomesticInstrumentQuery(instrumentQuery)
-                  ? "완성형 한글 1자 또는 종목코드를 입력하세요."
+                {!(selectedMarket === "미국" ? isSearchableUsInstrumentQuery(instrumentQuery) : isSearchableDomesticInstrumentQuery(instrumentQuery))
+                  ? selectedMarket === "미국" ? "회사명 또는 티커를 입력하세요." : "완성형 한글 1자 또는 종목코드를 입력하세요."
                   : instrumentSearchLoading
                   ? "KIS 종목 마스터 검색 중…"
                   : (desktop.instrumentSearch?.statusMessage ??
                     "검색어를 확인하고 있습니다.")}
               </div>
               {!instrumentSearchLoading &&
-              isSearchableDomesticInstrumentQuery(instrumentQuery)
+              (selectedMarket === "미국" ? isSearchableUsInstrumentQuery(instrumentQuery) : isSearchableDomesticInstrumentQuery(instrumentQuery))
                 ? visibleInstrumentSearchItems.map(
                     (item, index) => (
                       <button
@@ -1341,12 +1608,12 @@ export function App() {
                   )
                 : null}
               {!instrumentSearchLoading &&
-              isSearchableDomesticInstrumentQuery(instrumentQuery) &&
+              (selectedMarket === "미국" ? isSearchableUsInstrumentQuery(instrumentQuery) : isSearchableDomesticInstrumentQuery(instrumentQuery)) &&
               desktop.instrumentSearch?.state === "READY" &&
               desktop.instrumentSearch.query === normalizedInstrumentQuery &&
               visibleInstrumentSearchItems.length === 0 ? (
                 <p className="global-search__empty">
-                  일치하는 KOSPI·KOSDAQ 종목이 없습니다.
+                  일치하는 {selectedMarket === "미국" ? "미국" : "KOSPI·KOSDAQ"} 종목이 없습니다.
                 </p>
               ) : null}
             </div>
@@ -1502,16 +1769,42 @@ export function App() {
           });
           setWorkspacePage("DASHBOARD");
           setNotice(`${item.name}(${item.symbol}) 종목 화면을 여는 중입니다.`);
-          void desktop.selectInstrument(item.symbol);
+          const selection = item.instrumentId.startsWith("NASDAQ:")
+            ? `NAS:${item.symbol}`
+            : item.instrumentId.startsWith("NYSE:")
+              ? `NYS:${item.symbol}`
+              : item.instrumentId.startsWith("AMEX:")
+                ? `AMS:${item.symbol}`
+                : item.symbol;
+          setSelectedMarket(selection.includes(":") ? "미국" : "국내");
+          void desktop.selectInstrument(selection).then((projection) => {
+            if (projection !== null) void desktop.loadChartHistory(interval, chartRange);
+          });
         }}
       />
 
       <main className="workspace">
         <div className="workspace-tabs">
           {workspacePage === "DASHBOARD" ? (
-            <button type="button" className="active">
-              {activeInstrumentName} <span>{activeSymbol}</span>
-            </button>
+            workspaceInstruments.map((item) => (
+              <button
+                type="button"
+                key={item.symbol}
+                className={item.symbol === activeSymbol ? "active" : undefined}
+                onClick={() => {
+                  if (item.symbol === activeSymbol) return;
+                  setSelectedInstrument(item);
+                  setNotice(`${item.name}(${item.symbol}) 종목 화면을 여는 중입니다.`);
+                  const selection = item.selection ?? item.symbol;
+                  setSelectedMarket(selection.includes(":") ? "미국" : "국내");
+                  void desktop.selectInstrument(selection).then((projection) => {
+                    if (projection !== null) void desktop.loadChartHistory(interval, chartRange);
+                  });
+                }}
+              >
+                {item.name} <span>{item.symbol}</span>
+              </button>
+            ))
           ) : (
             <button type="button" className="active">
               {WORKSPACE_PAGE_LABELS[workspacePage]}
@@ -1527,10 +1820,13 @@ export function App() {
               type="button"
               className="add-tab"
               aria-label="작업공간 추가"
-              disabled={hasDesktopRuntime}
-              title={
-                hasDesktopRuntime ? "다종목 전환 연결 준비 중" : undefined
-              }
+              onClick={() => {
+                setInstrumentSearchOpen(true);
+                instrumentSearchInput.current?.focus();
+                setNotice("추가할 국내 종목을 검색해 선택하세요.");
+              }}
+              disabled={!hasDesktopRuntime}
+              title="검색해서 종목 탭 추가"
             >
               +
             </button>
@@ -1553,11 +1849,19 @@ export function App() {
           }}
         />
 
+        {!isUsSelection ? (
+          <InvestorFlowPanel
+            scope="MARKET"
+            projection={desktop.investorFlow}
+            onRefresh={() => void desktop.loadInvestorFlow()}
+          />
+        ) : null}
+
         <div hidden={workspacePage !== "DASHBOARD"}>
         <InstrumentHeader
           name={activeInstrumentName}
           symbol={activeSymbol}
-          market="KRX"
+          market={desktop.market?.venue ?? "KRX"}
           currency={activeCurrency}
           price={displayPrice}
           change={displayChange}
@@ -1598,28 +1902,37 @@ export function App() {
           }}
           metrics={[
             {
-              label: "마지막 종가",
-              value: isClosedMarket ? displayPrice : "—",
+              label: isClosedMarket ? "종가" : "전일 종가",
+              value: formatMarketPrice(
+                isClosedMarket
+                  ? desktop.market?.price ?? null
+                  : chartPreviousClosePrice,
+                activeCurrency,
+                "—",
+              ),
             },
             {
               label: "시가",
-              value: formatWholeNumber(
+              value: formatMarketPrice(
                 desktop.market?.openPrice ?? null,
+                activeCurrency,
                 hasDesktopRuntime ? "—" : "83,100",
               ),
             },
             {
               label: "고가",
-              value: formatWholeNumber(
+              value: formatMarketPrice(
                 desktop.market?.highPrice ?? null,
+                activeCurrency,
                 hasDesktopRuntime ? "—" : "85,200",
               ),
               direction: "positive",
             },
             {
               label: "저가",
-              value: formatWholeNumber(
+              value: formatMarketPrice(
                 desktop.market?.lowPrice ?? null,
+                activeCurrency,
                 hasDesktopRuntime ? "—" : "82,900",
               ),
               direction: "negative",
@@ -1633,10 +1946,17 @@ export function App() {
             },
             {
               label: "거래대금",
-              value: formatKrwTurnoverEok(
-                desktop.market?.cumulativeTurnover ?? null,
-                hasDesktopRuntime ? "—" : "1.42조",
-              ),
+              value:
+                activeCurrency === "USD"
+                  ? `${formatMarketPrice(
+                      desktop.market?.cumulativeTurnover ?? null,
+                      "USD",
+                      "—",
+                    )}${desktop.market?.cumulativeTurnover === null || desktop.market?.cumulativeTurnover === undefined ? "" : " USD"}`
+                  : formatKrwTurnoverEok(
+                      desktop.market?.cumulativeTurnover ?? null,
+                      hasDesktopRuntime ? "—" : "1.42조",
+                    ),
             },
           ]}
         />
@@ -1656,10 +1976,9 @@ export function App() {
           values={[
             {
               label: "가용 현금",
-              value: `₩${formatWholeNumber(
-                desktop.account?.cashMinor ?? null,
-                hasDesktopRuntime ? "—" : "47,230,000",
-              )}`,
+              value: hasDesktopRuntime
+                ? formatCashMinor(desktop.account?.cashMinor, desktop.account?.baseCurrency ?? activeCurrency)
+                : "₩47,230,000",
             },
             {
               label: "평가 손익",
@@ -1745,7 +2064,17 @@ export function App() {
             }
             dataMode={hasDesktopRuntime ? "REAL" : "FIXTURE"}
             referenceOnly={isReferenceOrderBook}
-            depthLabel={isReferenceOrderBook ? "잔량 미수신" : "KRX 10호가"}
+            depthLabel={
+              isUsOneLevelBook
+                ? "미국 실제 1호가 + 참고 가격대"
+                : isUsMarket
+                  ? `미국 실제 ${Math.min(desktop.market?.bids.length ?? 0, desktop.market?.asks.length ?? 0)}호가`
+                : isReferenceOrderBook
+                  ? "잔량 미수신"
+                  : desktop.market?.venue === "NXT"
+                    ? "NXT 10호가"
+                    : "KRX 10호가"
+            }
             asOfLabel={
               desktop.market?.providerTime
                 ? `${desktop.market.providerTime} 마지막 수신`
@@ -1764,7 +2093,7 @@ export function App() {
               !hasLastOrderBook
                 ? "실제 호가 잔량을 수신한 뒤 주문할 수 있습니다."
                 : !isRegularPaperSession
-                ? "KIS 정규장 실시간 호가에서만 주문할 수 있습니다."
+                ? "KRX/NXT 또는 미국 프리·정규·애프터 거래시간의 실시간 호가에서만 주문할 수 있습니다."
                 : desktop.account?.storageState !== "READY"
                   ? "SQLite 로컬 계좌를 준비하는 중입니다."
                   : "수량을 입력해 주세요."
@@ -1839,24 +2168,36 @@ export function App() {
 
         </div>
 
-        <InvestorFlowPanel projection={desktop.investorFlow} />
-
-        <div className="insight-grid">
-          <ThemeLeaders
-            items={hasDesktopRuntime ? liveThemeProjection.items : themes}
-            asOfLabel={
-              hasDesktopRuntime
-                ? liveThemeProjection.asOfLabel
-                : "10:32 KST · 동시간 20일 중앙값 기준"
-            }
-            onThemeSelect={(themeId) => {
-              setWorkspacePage("RANKINGS");
-              setRankingSort("TURNOVER");
-              setNotice(
-                `${themeId} 후보의 근거인 거래대금 상위 100위 화면으로 이동했습니다.`,
-              );
-            }}
+        {!isUsSelection ? (
+          <InvestorFlowPanel
+            scope="INSTRUMENT"
+            projection={desktop.investorFlow}
+            onRefresh={() => void desktop.loadInvestorFlow()}
           />
+        ) : null}
+
+        <div
+          className={
+            isUsSelection ? "insight-grid insight-grid--wide" : "insight-grid"
+          }
+        >
+          {!isUsSelection ? (
+            <ThemeLeaders
+              items={hasDesktopRuntime ? liveThemeProjection.items : themes}
+              asOfLabel={
+                hasDesktopRuntime
+                  ? liveThemeProjection.asOfLabel
+                  : "10:32 KST · 동시간 20일 중앙값 기준"
+              }
+              onThemeSelect={(themeId) => {
+                setWorkspacePage("RANKINGS");
+                setRankingSort("TURNOVER");
+                setNotice(
+                  `${themeId} 후보의 근거인 거래대금 상위 100위 화면으로 이동했습니다.`,
+                );
+              }}
+            />
+          ) : null}
           <NewsPanel
             news={hasDesktopRuntime ? liveInformationProjection.news : news}
             contexts={
@@ -1920,7 +2261,7 @@ export function App() {
                   <button
                     type="button"
                     onClick={() =>
-                      void desktop.loadDomesticRanking(rankingSort)
+                      void desktop.loadRanking(isUsSelection ? "US" : "KRX", rankingSort)
                     }
                   >
                     새로고침
@@ -1960,6 +2301,13 @@ export function App() {
                           const volumeDirection = marketDirection(
                             item.volumeIncreaseRate,
                           );
+                          const rankingSelection = item.instrumentId.startsWith("NASDAQ:")
+                            ? `NAS:${item.symbol}`
+                            : item.instrumentId.startsWith("NYSE:")
+                              ? `NYS:${item.symbol}`
+                              : item.instrumentId.startsWith("AMEX:")
+                                ? `AMS:${item.symbol}`
+                                : item.symbol;
                           return (
                           <tr
                             key={`${desktop.ranking?.sort}:${item.symbol}`}
@@ -1977,7 +2325,9 @@ export function App() {
                               setNotice(
                                 `${item.name}(${item.symbol}) 종목 화면을 여는 중입니다.`,
                               );
-                              void desktop.selectInstrument(item.symbol);
+                              void desktop.selectInstrument(rankingSelection).then((projection) => {
+                                if (projection !== null) void desktop.loadChartHistory(interval, chartRange);
+                              });
                             }}
                             onKeyDown={(event) => {
                               if (
@@ -2011,8 +2361,8 @@ export function App() {
                               </span>
                             </td>
                             <td className="pt-ranking-price">
-                              {formatWholeNumber(item.price, "—")}
-                              <small>원</small>
+                              {/^(NASDAQ|NYSE|AMEX):/.test(item.instrumentId) ? truncateUsPrice(item.price) : formatWholeNumber(item.price, "—")}
+                              <small>{/^(NASDAQ|NYSE|AMEX):/.test(item.instrumentId) ? "USD" : "원"}</small>
                             </td>
                             <td
                               className={`pt-ranking-rate ${itemDirection}`}
@@ -2037,10 +2387,9 @@ export function App() {
                             </td>
                             <td className="pt-ranking-turnover">
                               <strong>
-                                {formatKrwTurnoverEok(
-                                  item.cumulativeTurnover,
-                                  "—",
-                                )}
+                                {/^(NASDAQ|NYSE|AMEX):/.test(item.instrumentId)
+                                  ? `$${formatWholeNumber(item.cumulativeTurnover?.split(".")[0] ?? null, "—")}`
+                                  : formatKrwTurnoverEok(item.cumulativeTurnover, "—")}
                               </strong>
                             </td>
                           </tr>
@@ -2075,11 +2424,7 @@ export function App() {
                     <div>
                       <dt>가용 현금</dt>
                       <dd>
-                        ₩
-                        {formatWholeNumber(
-                          desktop.account?.cashMinor ?? null,
-                          "—",
-                        )}
+                        {formatCashMinor(desktop.account?.cashMinor, desktop.account?.baseCurrency ?? activeCurrency)}
                       </dd>
                     </div>
                     <div>
@@ -2181,9 +2526,13 @@ export function App() {
               <article className="pt-page-card pt-page-card--wide">
                 <div className="pt-page-card__toolbar">
                   <div>
-                    <h2>실제 뉴스·공시 피드</h2>
+                    <h2>
+                      {isUsSelection
+                        ? `미국 · ${activeInstrumentName} 뉴스 · SEC 공시 · 전체 시장 관찰`
+                        : "국내 · KIS 뉴스 · OpenDART 공시"}
+                    </h2>
                     <p>
-                      {desktop.informationFeed?.statusMessage ??
+                      {marketScopedInformationFeed?.statusMessage ??
                         "KIS·SEC 읽기 전용 데이터를 불러오는 중입니다."}
                     </p>
                   </div>
@@ -2196,23 +2545,56 @@ export function App() {
                     새로고침
                   </button>
                 </div>
+                <div className="pt-information-scope" aria-label="공시·뉴스 종목 필터">
+                  {([
+                    ["ALL", "전체"],
+                    ["SELECTED", "선택 종목"],
+                    ["WATCHLIST", "관심 종목"],
+                  ] as const).map(([scope, label]) => (
+                    <button
+                      type="button"
+                      key={scope}
+                      className={informationScope === scope ? "active" : undefined}
+                      onClick={() => setInformationScope(scope)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
                 <div className="pt-information-sources">
-                  {(desktop.informationFeed?.sources ?? []).map((source) => (
-                    <span
+                  {(marketScopedInformationFeed?.sources ?? []).map((source) => (
+                    <button
+                      type="button"
                       key={source.provider}
                       data-state={source.state.toLowerCase()}
+                      className={
+                        informationProvider === source.provider
+                          ? "active"
+                          : undefined
+                      }
                       title={source.message}
+                      aria-pressed={informationProvider === source.provider}
+                      onClick={() =>
+                        setInformationProvider((current) =>
+                          current === source.provider ? null : source.provider,
+                        )
+                      }
                     >
                       {informationProviderLabel(source.provider)}
                       <strong>{source.itemCount}</strong>
-                    </span>
+                    </button>
                   ))}
                 </div>
-                {desktop.informationFeed &&
-                desktop.informationFeed.items.length > 0 ? (
+                {marketScopedInformationFeed &&
+                visibleInformationItems.length > 0 ? (
                   <ol className="pt-information-feed">
-                    {desktop.informationFeed.items.map((item) => (
+                    {visibleInformationItems.map((item) => (
                       <li key={item.id}>
+                        <button
+                          type="button"
+                          className="pt-information-feed__detail-trigger"
+                          onClick={() => setSelectedInformationItem(item)}
+                        >
                         <div className="pt-information-feed__meta">
                           <span>{informationProviderLabel(item.provider)}</span>
                           <span>
@@ -2235,16 +2617,18 @@ export function App() {
                           <small>부분 번역 참고: {item.titleKorean}</small>
                         ) : null}
                         {item.rights !== "KIS_HEADLINE_ONLY" &&
-                        item.sourceLanguage === "ko" &&
                         item.summaryKorean ? (
                           <p>{item.summaryKorean}</p>
                         ) : null}
+                        </button>
                         <footer>
                           <span>{item.sourceName}</span>
                           <span>
                             {item.rights === "KIS_HEADLINE_ONLY"
                               ? "제목만 제공"
-                              : "공식 공개 공시"}
+                              : item.rights === "PUBLIC_FILING"
+                                ? "공식 공개 공시"
+                                : "제공사 요약·원문 링크"}
                           </span>
                           {item.sourceLanguage !== "ko" &&
                           item.titleKorean === null ? (
@@ -2261,7 +2645,9 @@ export function App() {
                             >
                               {item.provider === "OPEN_DART"
                                 ? "DART 원문 보기"
-                                : "SEC 원문 보기"}
+                                : item.provider === "SEC_EDGAR"
+                                  ? "SEC 원문 보기"
+                                  : "기사 원문 보기"}
                             </button>
                           ) : null}
                         </footer>
@@ -2273,8 +2659,9 @@ export function App() {
                     <Newspaper />
                     <strong>실제 뉴스·공시를 기다리는 중입니다</strong>
                     <span>
-                      합성 뉴스는 표시하지 않습니다. OpenDART는 키가
-                      발급되면 같은 로컬 피드에 추가됩니다.
+                      {isUsSelection
+                        ? "선택 티커의 KIS 미국뉴스와 SEC EDGAR 공식 공시, 미국 전체 헤드라인을 조회하고 있습니다. 합성 뉴스는 표시하지 않습니다."
+                        : "합성 뉴스는 표시하지 않습니다. OpenDART 공시는 같은 로컬 피드에 추가됩니다."}
                     </span>
                   </div>
                 )}
@@ -2388,6 +2775,63 @@ export function App() {
           <CircleDollarSign size={13} /> 실제 주문 기능 없음
         </span>
       </footer>
+      {selectedInformationItem ? (
+        <div
+          className="pt-information-modal__backdrop"
+          role="presentation"
+          onMouseDown={() => setSelectedInformationItem(null)}
+        >
+          <section
+            className="pt-information-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="information-detail-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <header>
+              <div>
+                <span>{informationProviderLabel(selectedInformationItem.provider)}</span>
+                <span>{selectedInformationItem.kind === "DISCLOSURE" ? "공시" : "뉴스"}</span>
+              </div>
+              <button type="button" aria-label="상세 창 닫기" onClick={() => setSelectedInformationItem(null)}>×</button>
+            </header>
+            <h2 id="information-detail-title">
+              {selectedInformationItem.sourceLanguage === "ko"
+                ? selectedInformationItem.titleKorean ?? selectedInformationItem.titleOriginal
+                : selectedInformationItem.titleOriginal}
+            </h2>
+            <div className="pt-information-modal__meta">
+              <span>{selectedInformationItem.sourceName}</span>
+              <time dateTime={selectedInformationItem.publishedAt}>
+                {formatInformationTime(selectedInformationItem.publishedAt, selectedInformationItem.publishedAtPrecision)}
+              </time>
+            </div>
+            {selectedInformationItem.summaryKorean ? (
+              <p className="pt-information-modal__summary">{selectedInformationItem.summaryKorean}</p>
+            ) : (
+              <p className="pt-information-modal__notice">
+                {selectedInformationItem.rights === "KIS_HEADLINE_ONLY"
+                  ? "제공 정책상 제목만 표시할 수 있습니다."
+                  : "이 항목에는 별도 요약문이 없습니다. 공식 원문에서 상세 내용을 확인할 수 있습니다."}
+              </p>
+            )}
+            <footer>
+              <span>
+                {selectedInformationItem.rights === "PUBLIC_FILING"
+                  ? "공식 공개 공시"
+                  : selectedInformationItem.rights === "PROVIDER_LINK_SUMMARY"
+                    ? "제공사 요약"
+                    : "제목 제공"}
+              </span>
+              {selectedInformationItem.canonicalUrl ? (
+                <button type="button" onClick={() => void window.paperTradingDesktop.information.openExternal(selectedInformationItem.canonicalUrl!)}>
+                  공식 원문 열기
+                </button>
+              ) : null}
+            </footer>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }

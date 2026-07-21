@@ -774,8 +774,8 @@ select:focus-visible {
 
 .pt-instrument-header {
   display: grid;
-  grid-template-columns: minmax(210px, 1fr) 160px minmax(450px, 2fr) auto;
-  gap: 18px;
+  grid-template-columns: minmax(180px, 220px) 145px minmax(570px, 1fr) auto;
+  gap: 10px;
   align-items: center;
   min-height: 78px;
   padding: 12px 14px;
@@ -815,8 +815,13 @@ select:focus-visible {
 
 .pt-instrument-header__metrics {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(6, minmax(76px, 1fr));
   gap: 6px;
+}
+
+.pt-instrument-header__metrics > * {
+  min-width: 0;
+  white-space: nowrap;
 }
 
 .pt-instrument-header__session {
@@ -1428,6 +1433,10 @@ select:focus-visible {
   margin-top: 8px;
 }
 
+.insight-grid--wide {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .pt-functional-page {
   min-height: calc(100% - 35px);
   padding: 24px;
@@ -1777,7 +1786,28 @@ select:focus-visible {
   margin-bottom: 12px;
 }
 
-.pt-information-sources > span {
+.pt-information-scope {
+  display: flex;
+  gap: 6px;
+  margin: 12px 0 8px;
+}
+
+.pt-information-scope button {
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  padding: 6px 11px;
+  color: var(--color-text-secondary);
+  background: transparent;
+  cursor: pointer;
+}
+
+.pt-information-scope button.active {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+
+.pt-information-sources > button {
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -1787,9 +1817,10 @@ select:focus-visible {
   border-radius: 999px;
   color: var(--color-text-secondary);
   background: var(--color-bg-elevated);
+  cursor: pointer;
 }
 
-.pt-information-sources > span::before {
+.pt-information-sources > button::before {
   width: 7px;
   height: 7px;
   border-radius: 50%;
@@ -1797,21 +1828,28 @@ select:focus-visible {
   content: "";
 }
 
-.pt-information-sources > span[data-state="live"]::before {
+.pt-information-sources > button[data-state="live"]::before,
+.pt-information-sources > button[data-state="ready"]::before {
   background: var(--color-success);
 }
 
-.pt-information-sources > span[data-state="error"]::before {
+.pt-information-sources > button[data-state="error"]::before {
   background: var(--color-negative);
 }
 
-.pt-information-sources > span[data-state="unconfigured"]::before {
+.pt-information-sources > button[data-state="unconfigured"]::before {
   background: var(--color-warning);
 }
 
 .pt-information-sources strong {
   color: var(--color-text-primary);
   font-variant-numeric: tabular-nums;
+}
+
+.pt-information-sources > button.active {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
 }
 
 .pt-information-feed {
@@ -1831,6 +1869,28 @@ select:focus-visible {
   border: 1px solid var(--color-border);
   border-radius: 7px;
   background: var(--color-bg-elevated);
+}
+
+.pt-information-feed__detail-trigger {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  cursor: pointer;
+}
+
+.pt-information-feed__detail-trigger:hover strong {
+  color: var(--accent, #4ea8ff);
+}
+
+.pt-information-feed__detail-trigger p {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.55;
 }
 
 .pt-information-feed > li > strong {
@@ -1885,6 +1945,91 @@ select:focus-visible {
 
 .pt-information-feed > li > footer button:hover {
   background: var(--color-accent-soft);
+}
+
+.pt-information-modal__backdrop {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(3 8 15 / 76%);
+  backdrop-filter: blur(6px);
+}
+
+.pt-information-modal {
+  display: grid;
+  gap: 18px;
+  width: min(720px, 100%);
+  max-height: min(760px, calc(100vh - 48px));
+  overflow: auto;
+  padding: 24px;
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  color: var(--color-text-primary);
+  background: var(--color-bg-panel);
+  box-shadow: 0 24px 80px rgb(0 0 0 / 45%);
+}
+
+.pt-information-modal > header,
+.pt-information-modal > footer,
+.pt-information-modal__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pt-information-modal > header > div {
+  display: flex;
+  gap: 8px;
+  color: var(--color-accent);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.pt-information-modal > header > button {
+  border: 0;
+  color: var(--color-text-secondary);
+  background: transparent;
+  font-size: 28px;
+  cursor: pointer;
+}
+
+.pt-information-modal h2,
+.pt-information-modal p {
+  margin: 0;
+}
+
+.pt-information-modal h2 {
+  line-height: 1.4;
+}
+
+.pt-information-modal__meta,
+.pt-information-modal__notice,
+.pt-information-modal > footer {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.pt-information-modal__summary {
+  white-space: pre-wrap;
+  line-height: 1.75;
+}
+
+.pt-information-modal > footer {
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border);
+}
+
+.pt-information-modal > footer button {
+  padding: 9px 13px;
+  border: 1px solid var(--color-accent);
+  border-radius: 8px;
+  color: var(--color-accent);
+  background: transparent;
+  cursor: pointer;
 }
 
 .pt-page-card dl {
@@ -2123,6 +2268,37 @@ select:focus-visible {
   display: flex;
   gap: 4px;
   padding-top: 10px;
+}
+
+.pt-investor-flow__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+.pt-investor-flow__actions button {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  color: var(--color-text-primary);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.pt-investor-flow__actions button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.pt-investor-flow__actions svg {
+  width: 14px;
+  height: 14px;
 }
 
 .pt-investor-flow__tabs button,
@@ -2469,7 +2645,8 @@ select:focus-visible {
   }
 
   .pt-instrument-header {
-    grid-template-columns: 210px 145px 1fr;
+    grid-template-columns: 180px 135px minmax(570px, 1fr);
+    gap: 8px;
   }
 
   .pt-instrument-header__session {

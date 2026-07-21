@@ -47,6 +47,14 @@ export interface DesktopMarketProjection {
   readonly statusMessage: string;
 }
 
+export interface DesktopWatchlistQuoteProjection {
+  readonly instrumentId: string;
+  readonly price: string;
+  readonly changeRate: string;
+  readonly cumulativeTurnover: string;
+  readonly receivedAt: string;
+}
+
 export interface DesktopPositionProjection {
   readonly instrumentId: string;
   readonly quantity: string;
@@ -164,7 +172,7 @@ export interface DesktopRankingItemProjection {
 
 export interface DesktopRankingProjection {
   readonly schemaVersion: 1;
-  readonly market: "KRX";
+  readonly market: "KRX" | "US";
   readonly sort: DesktopRankingSort;
   readonly state: "DISABLED" | "LOADING" | "READY" | "ERROR";
   readonly items: readonly DesktopRankingItemProjection[];
@@ -237,7 +245,7 @@ export interface DesktopInstrumentSearchItemProjection {
   readonly symbol: string;
   readonly standardCode: string;
   readonly name: string;
-  readonly market: "KOSPI" | "KOSDAQ";
+  readonly market: "KOSPI" | "KOSDAQ" | "NASDAQ" | "NYSE" | "AMEX";
   readonly securityType: "STOCK" | "ETF" | "ETN" | "OTHER";
 }
 
@@ -260,6 +268,12 @@ export function isSearchableDomesticInstrumentQuery(
   if (query.length === 0 || query.length > 40) return false;
   if (/[\u1100-\u11ff\u3130-\u318f]/u.test(query)) return false;
   return query.length > 1 || /[\uac00-\ud7a30-9]/u.test(query);
+}
+
+export function isSearchableUsInstrumentQuery(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const query = value.trim().normalize("NFKC");
+  return query.length >= 1 && query.length <= 40 && !/[\u0000-\u001f\u007f]/u.test(query);
 }
 
 export type DesktopMarketContextRepresentation =
@@ -325,6 +339,7 @@ export interface DesktopInformationItemProjection {
   readonly provider:
     | "KIS_DOMESTIC_NEWS"
     | "KIS_OVERSEAS_NEWS"
+    | "FINNHUB_NEWS"
     | "SEC_EDGAR"
     | "OPEN_DART";
   readonly kind: "NEWS" | "DISCLOSURE";
@@ -337,7 +352,7 @@ export interface DesktopInformationItemProjection {
   readonly publishedAtPrecision: "SECOND" | "DATE";
   readonly obtainedAt: string;
   readonly canonicalUrl: string | null;
-  readonly rights: "KIS_HEADLINE_ONLY" | "PUBLIC_FILING";
+  readonly rights: "KIS_HEADLINE_ONLY" | "PUBLIC_FILING" | "PROVIDER_LINK_SUMMARY";
   readonly relatedInstrumentIds: readonly string[];
 }
 
@@ -345,6 +360,7 @@ export interface DesktopInformationSourceProjection {
   readonly provider:
     | "KIS_DOMESTIC_NEWS"
     | "KIS_OVERSEAS_NEWS"
+    | "FINNHUB_NEWS"
     | "SEC_EDGAR"
     | "OPEN_DART";
   readonly state: "READY" | "UNCONFIGURED" | "ERROR";
@@ -412,6 +428,7 @@ export const DESKTOP_CHANNELS = Object.freeze({
   marketConnect: "papertrading:market:connect-readonly",
   marketDisconnect: "papertrading:market:disconnect",
   marketSelectInstrument: "papertrading:market:select-instrument",
+  watchlistQuotesGet: "papertrading:watchlist-quotes:get",
   marketProjection: "papertrading:market:projection",
   accountProjection: "papertrading:account:projection",
   chartGetHistory: "papertrading:chart:get-history",
@@ -456,6 +473,24 @@ function isUnsignedInteger(value: unknown, positive = false): value is string {
   );
 }
 
+function isUnsignedDecimal(value: unknown, positive = false): value is string {
+  return (
+    typeof value === "string" &&
+    (positive
+      ? /^(?=.*[1-9])\d+(?:\.\d+)?$/.test(value)
+      : /^\d+(?:\.\d+)?$/.test(value))
+  );
+}
+
+function compareUnsignedDecimals(left: string, right: string): number {
+  const [leftWhole = "0", leftFraction = ""] = left.split(".");
+  const [rightWhole = "0", rightFraction = ""] = right.split(".");
+  const scale = Math.max(leftFraction.length, rightFraction.length);
+  const leftScaled = BigInt(`${leftWhole}${leftFraction.padEnd(scale, "0")}`);
+  const rightScaled = BigInt(`${rightWhole}${rightFraction.padEnd(scale, "0")}`);
+  return leftScaled < rightScaled ? -1 : leftScaled > rightScaled ? 1 : 0;
+}
+
 function isIsoInstant(value: unknown): value is string {
   return typeof value === "string" && Number.isFinite(Date.parse(value));
 }
@@ -475,12 +510,12 @@ export function isDesktopChartProjection(
   if (
     value["schemaVersion"] !== 1 ||
     typeof instrumentId !== "string" ||
-    !/^KRX:[0-9A-Z]{6,7}$/.test(instrumentId) ||
+    !/^(?:KRX:[0-9A-Z]{6,7}|(?:NASDAQ|NYSE|AMEX):[A-Z0-9.\-]{1,20})$/.test(instrumentId) ||
     !["1m", "5m", "15m", "30m", "60m", "4h", "1d", "1w"].includes(
       String(interval),
     ) ||
     !["1D", "6M", "1Y", "5Y"].includes(String(range)) ||
-    (["1m", "5m", "15m", "30m", "60m", "4h"].includes(
+    (instrumentId.startsWith("KRX:") && ["1m", "5m", "15m", "30m", "60m", "4h"].includes(
       String(interval),
     ) &&
       range !== "1D") ||
@@ -497,7 +532,7 @@ export function isDesktopChartProjection(
     (value["turnoverQuality"] !== "PROVIDER_REPORTED" &&
       value["turnoverQuality"] !== "LOCAL_TRADE_AGGREGATE" &&
       value["turnoverQuality"] !== "UNAVAILABLE") ||
-    (["1m", "5m", "15m", "30m", "60m", "4h"].includes(
+    (instrumentId.startsWith("KRX:") && ["1m", "5m", "15m", "30m", "60m", "4h"].includes(
       String(interval),
     ) &&
       value["turnoverQuality"] !== "UNAVAILABLE") ||
@@ -517,15 +552,15 @@ export function isDesktopChartProjection(
       !isIsoInstant(closedAt) ||
       Date.parse(openedAt) >= Date.parse(closedAt) ||
       candle["id"] !== `${instrumentId}:${interval}:${openedAt}` ||
-      !isUnsignedInteger(candle["open"], true) ||
-      !isUnsignedInteger(candle["high"], true) ||
-      !isUnsignedInteger(candle["low"], true) ||
-      !isUnsignedInteger(candle["close"], true) ||
+      !isUnsignedDecimal(candle["open"], true) ||
+      !isUnsignedDecimal(candle["high"], true) ||
+      !isUnsignedDecimal(candle["low"], true) ||
+      !isUnsignedDecimal(candle["close"], true) ||
       (candle["volume"] !== null &&
-        !isUnsignedInteger(candle["volume"])) ||
+        !isUnsignedDecimal(candle["volume"])) ||
       (candle["turnover"] !== null &&
-        !isUnsignedInteger(candle["turnover"])) ||
-      (["1m", "5m", "15m", "30m", "60m", "4h"].includes(
+        !isUnsignedDecimal(candle["turnover"])) ||
+      (instrumentId.startsWith("KRX:") && ["1m", "5m", "15m", "30m", "60m", "4h"].includes(
         String(interval),
       ) &&
         candle["turnover"] !== null) ||
@@ -533,11 +568,14 @@ export function isDesktopChartProjection(
     ) {
       return false;
     }
-    const open = BigInt(candle["open"]);
-    const high = BigInt(candle["high"]);
-    const low = BigInt(candle["low"]);
-    const close = BigInt(candle["close"]);
-    return low <= open && low <= close && high >= open && high >= close;
+    const open = candle["open"];
+    const high = candle["high"];
+    const low = candle["low"];
+    const close = candle["close"];
+    return compareUnsignedDecimals(low, open) <= 0 &&
+      compareUnsignedDecimals(low, close) <= 0 &&
+      compareUnsignedDecimals(high, open) >= 0 &&
+      compareUnsignedDecimals(high, close) >= 0;
   });
 }
 
@@ -547,7 +585,7 @@ export function isDesktopRankingProjection(
   if (!isRecord(value) || !Array.isArray(value["items"])) return false;
   if (
     value["schemaVersion"] !== 1 ||
-    value["market"] !== "KRX" ||
+    !["KRX", "US"].includes(String(value["market"])) ||
     ![
       "AVERAGE_VOLUME",
       "VOLUME_INCREASE",
@@ -568,18 +606,19 @@ export function isDesktopRankingProjection(
   ) {
     return false;
   }
+  const isUs = value["market"] === "US";
   return value["items"].every(
     (item) =>
       isRecord(item) &&
       typeof item["rank"] === "string" &&
-      /^KRX:[0-9A-Z]{6,7}$/.test(String(item["instrumentId"])) &&
-      /^[0-9A-Z]{6,7}$/.test(String(item["symbol"])) &&
-      item["instrumentId"] === `KRX:${String(item["symbol"])}` &&
+      (isUs ? /^(NASDAQ|NYSE|AMEX):[A-Z0-9.-]{1,20}$/.test(String(item["instrumentId"])) : /^KRX:[0-9A-Z]{6,7}$/.test(String(item["instrumentId"]))) &&
+      (isUs ? /^[A-Z0-9.-]{1,20}$/.test(String(item["symbol"])) : /^[0-9A-Z]{6,7}$/.test(String(item["symbol"]))) &&
+      (isUs || item["instrumentId"] === `KRX:${String(item["symbol"])}`) &&
       typeof item["name"] === "string" &&
-      isUnsignedInteger(item["price"], true) &&
+      (isUs ? isUnsignedDecimal(item["price"], true) : isUnsignedInteger(item["price"], true)) &&
       typeof item["change"] === "string" &&
       typeof item["changeRate"] === "string" &&
-      isUnsignedInteger(item["cumulativeVolume"]) &&
+      (isUs ? isUnsignedDecimal(item["cumulativeVolume"]) : isUnsignedInteger(item["cumulativeVolume"])) &&
       isStringOrNull(item["previousVolume"]) &&
       isStringOrNull(item["averageVolume"]) &&
       isStringOrNull(item["volumeIncreaseRate"]) &&
@@ -588,7 +627,7 @@ export function isDesktopRankingProjection(
       isStringOrNull(item["turnoverTurnoverRate"]) &&
       isStringOrNull(item["cumulativeTurnover"]) &&
       (item["cumulativeTurnover"] === null ||
-        isUnsignedInteger(item["cumulativeTurnover"])),
+        (isUs ? isUnsignedDecimal(item["cumulativeTurnover"]) : isUnsignedInteger(item["cumulativeTurnover"]))),
   );
 }
 
@@ -790,7 +829,8 @@ export function isDesktopInstrumentSearchProjection(
   if (
     !isRecord(value) ||
     value["schemaVersion"] !== 1 ||
-    !isSearchableDomesticInstrumentQuery(value["query"]) ||
+    (!isSearchableDomesticInstrumentQuery(value["query"]) &&
+      !isSearchableUsInstrumentQuery(value["query"])) ||
     !["READY", "ERROR"].includes(String(value["state"])) ||
     !Array.isArray(value["items"]) ||
     value["items"].length > 20 ||
@@ -805,16 +845,16 @@ export function isDesktopInstrumentSearchProjection(
   return value["items"].every(
     (item) =>
       isRecord(item) &&
-      /^KRX:[0-9A-Z]{6,7}$/.test(String(item["instrumentId"])) &&
-      /^[0-9A-Z]{6,7}$/.test(String(item["symbol"])) &&
-      item["instrumentId"] === `KRX:${String(item["symbol"])}` &&
+      /^(?:KRX:[0-9A-Z]{6,7}|(?:NASDAQ|NYSE|AMEX):[A-Z0-9.-]{1,20})$/.test(String(item["instrumentId"])) &&
+      /^[0-9A-Z.-]{1,20}$/.test(String(item["symbol"])) &&
+      item["instrumentId"] === `${["KOSPI", "KOSDAQ"].includes(String(item["market"])) ? "KRX" : String(item["market"])}:${String(item["symbol"])}` &&
       typeof item["standardCode"] === "string" &&
       item["standardCode"].length > 0 &&
       item["standardCode"].length <= 20 &&
       typeof item["name"] === "string" &&
       item["name"].length > 0 &&
       item["name"].length <= 120 &&
-      ["KOSPI", "KOSDAQ"].includes(String(item["market"])) &&
+      ["KOSPI", "KOSDAQ", "NASDAQ", "NYSE", "AMEX"].includes(String(item["market"])) &&
       ["STOCK", "ETF", "ETN", "OTHER"].includes(
         String(item["securityType"]),
       ),
@@ -959,6 +999,7 @@ export function isDesktopInformationFeedProjection(
   const providers = [
     "KIS_DOMESTIC_NEWS",
     "KIS_OVERSEAS_NEWS",
+    "FINNHUB_NEWS",
     "SEC_EDGAR",
     "OPEN_DART",
   ];
@@ -968,7 +1009,7 @@ export function isDesktopInformationFeedProjection(
       String(value["state"]),
     ) ||
     value["items"].length > 500 ||
-    value["sources"].length > 4 ||
+    value["sources"].length > 5 ||
     (value["fetchedAt"] !== null && !isIsoInstant(value["fetchedAt"])) ||
     typeof value["statusMessage"] !== "string"
   ) {
@@ -1004,7 +1045,7 @@ export function isDesktopInformationFeedProjection(
         (item["canonicalUrl"] === null ||
           (typeof item["canonicalUrl"] === "string" &&
             /^https:\/\//.test(item["canonicalUrl"]))) &&
-        ["KIS_HEADLINE_ONLY", "PUBLIC_FILING"].includes(
+        ["KIS_HEADLINE_ONLY", "PUBLIC_FILING", "PROVIDER_LINK_SUMMARY"].includes(
           String(item["rights"]),
         ) &&
         Array.isArray(item["relatedInstrumentIds"]) &&

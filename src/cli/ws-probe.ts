@@ -1,7 +1,7 @@
 import {
   assertLiveReadOnlyAcknowledgement,
   loadRuntimeConfig,
-  requireKisCredentials,
+  requireKisCredentialsForEnvironment,
 } from "../config/runtime-config.js";
 import { KisAuthClient } from "../kis/auth.js";
 import {
@@ -17,7 +17,6 @@ import {
 
 const config = loadRuntimeConfig();
 assertLiveReadOnlyAcknowledgement(config);
-const credentials = requireKisCredentials(config);
 function requestedMarket(): "kr" | "nxt" | "us" | "proxy" {
   const index = process.argv.indexOf("--market");
   const value = index >= 0 ? process.argv[index + 1] : "kr";
@@ -33,7 +32,9 @@ function requestedMarket(): "kr" | "nxt" | "us" | "proxy" {
 }
 
 const market = requestedMarket();
-const auth = new KisAuthClient(config.KIS_DATA_ENV, credentials);
+const environment = market === "us" ? "prod" : config.KIS_DATA_ENV;
+const credentials = requireKisCredentialsForEnvironment(config, environment);
+const auth = new KisAuthClient(environment, credentials);
 const approvalKey = await auth.getApprovalKey();
 
 const subscriptions =
@@ -59,7 +60,7 @@ const subscriptions =
         : domesticProbeSubscriptions(config.KIS_DOMESTIC_SYMBOL);
 
 const result = await runWsProbe({
-  environment: config.KIS_DATA_ENV,
+  environment,
   approvalKey,
   subscriptions,
   durationSeconds: config.KIS_PROBE_SECONDS,
@@ -69,7 +70,7 @@ console.log(
   JSON.stringify(
     {
       market,
-      environment: config.KIS_DATA_ENV,
+      environment,
       symbol:
         market === "us"
           ? `${config.KIS_US_EXCHANGE}:${config.KIS_US_SYMBOL}`
@@ -109,10 +110,15 @@ console.log(
               ? {
                   verification:
                     result.receivedRecords > 0 ? "verified" : "ack-only",
-                  dataUse: "DISPLAY_ONLY",
-                  paperFillEligible: false,
+                  dataUse: "LOCAL_PAPER_EXECUTION_EVIDENCE",
+                  paperFillEligible:
+                    (result.receivedByTrId.H0NXASP0 ?? 0) > 0 &&
+                    (result.receivedByTrId.H0NXCNT0 ?? 0) > 0 &&
+                    result.acknowledgedSubscriptions.some(
+                      (item) => item.trId === "H0NXMKO0",
+                    ),
                   note:
-                    "NXT paper fills remain locked until H0NXMKO0 phase/VI evidence is normalized",
+                    "Local simulation only; official NXT window plus fresh venue-attributed book and trade are required",
                 }
               : {
                 verification:

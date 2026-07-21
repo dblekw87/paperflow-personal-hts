@@ -12,6 +12,8 @@ import { KisApiError } from "../errors.js";
 import {
   buildSubscriptionMessage,
   domesticProbeSubscriptions,
+  nxtDomesticProbeSubscriptions,
+  usProbeSubscriptions,
   koreaBusinessDate,
   rawDataToText,
   validateProbeDataFrame,
@@ -21,12 +23,19 @@ import { parseKisWsFrame, type KisPipeFrame } from "./frame.js";
 import {
   normalizeDomesticOrderBook,
   normalizeDomesticTrade,
+  normalizeNxtOrderBook,
+  normalizeNxtTrade,
+  normalizeUsOrderBook,
+  normalizeUsTrade,
 } from "./normalize.js";
+import { resolveUsEquitySession } from "../../market-data/us-equity-session.js";
 
 export interface DomesticLiveStreamOptions {
   environment: "paper" | "prod";
   approvalKey: string;
   symbol: string;
+  venue?: "KRX" | "NXT" | "NASDAQ" | "NYSE" | "AMEX";
+  providerExchange?: "NAS" | "NYS" | "AMS";
   socketFactory?: (url: string) => WebSocket;
   onEvent?: (event: MarketLiveEvent) => void;
   onProjection?: (projection: MarketLiveProjection) => void;
@@ -139,7 +148,13 @@ export class DomesticKisLiveStream {
   #handshakeTimer: NodeJS.Timeout | null = null;
 
   constructor(options: DomesticLiveStreamOptions) {
-    if (!/^[0-9A-Z]{6,7}$/.test(options.symbol)) {
+    const venue = options.venue ?? "KRX";
+    const isUsVenue = venue === "NASDAQ" || venue === "NYSE" || venue === "AMEX";
+    if (
+      (isUsVenue && !/^[A-Z0-9.-]{1,20}$/.test(options.symbol)) ||
+      (!isUsVenue && !/^[0-9A-Z]{6,7}$/.test(options.symbol)) ||
+      (isUsVenue && options.providerExchange === undefined)
+    ) {
       throw safeError("KIS_WS_UNEXPECTED_INSTRUMENT", false);
     }
     if (!options.approvalKey) {
@@ -173,8 +188,18 @@ export class DomesticKisLiveStream {
     }
 
     this.#options = options;
-    this.#subscriptions = domesticProbeSubscriptions(options.symbol);
-    this.#instrumentId = `KRX:${options.symbol}`;
+    this.#subscriptions =
+      venue === "NXT"
+        ? nxtDomesticProbeSubscriptions(options.symbol)
+        : venue !== "KRX"
+          ? usProbeSubscriptions(
+              options.providerExchange ?? "NAS",
+              options.symbol,
+              venue,
+            )
+        : domesticProbeSubscriptions(options.symbol);
+    // A security keeps one portfolio identity across execution venues.
+    this.#instrumentId = `${venue === "NXT" ? "KRX" : venue}:${options.symbol}`;
     this.#now = options.now ?? (() => new Date());
     this.#random = options.random ?? Math.random;
     this.#staleAfterMs = staleAfterMs;
@@ -398,7 +423,13 @@ export class DomesticKisLiveStream {
             trade: tradeAcknowledged,
           },
         });
-        if (orderBookAcknowledged && tradeAcknowledged) {
+        if (
+          orderBookAcknowledged &&
+          tradeAcknowledged &&
+          this.#subscriptions.every((subscription) =>
+            this.#acknowledged.has(subscriptionIdentity(subscription)),
+          )
+        ) {
           this.#clearHandshakeTimer();
           this.#patchProjection({
             connectionStatus: "live",
@@ -412,7 +443,12 @@ export class DomesticKisLiveStream {
         return;
       }
 
-      const identity = `${frame.trId}:${this.#options.symbol}`;
+      const dataSubscription = this.#subscriptions.find(
+        (subscription) => subscription.trId === frame.trId,
+      );
+      const identity = dataSubscription
+        ? subscriptionIdentity(dataSubscription)
+        : `${frame.trId}:${this.#options.symbol}`;
       const allSubscriptionsAcknowledged = this.#subscriptions.every(
         (subscription) =>
           this.#acknowledged.has(subscriptionIdentity(subscription)),
@@ -454,18 +490,31 @@ export class DomesticKisLiveStream {
 
   #applyDataFrame(frame: KisPipeFrame): void {
     const receivedAt = this.#now().toISOString();
-    if (frame.trId === KIS_TR.domesticOrderBook) {
-      const snapshots = normalizeDomesticOrderBook(
-        frame,
-        koreaBusinessDate(this.#now()),
-      );
+    if (
+      frame.trId === KIS_TR.domesticOrderBook ||
+      frame.trId === KIS_TR.domesticNxtOrderBook ||
+      frame.trId === KIS_TR.usOrderBook
+    ) {
+      const snapshots =
+        frame.trId === KIS_TR.usOrderBook
+          ? normalizeUsOrderBook(
+              frame,
+              this.#options.venue ?? "NASDAQ",
+            )
+          : frame.trId === KIS_TR.domesticNxtOrderBook
+          ? normalizeNxtOrderBook(frame, koreaBusinessDate(this.#now()))
+          : normalizeDomesticOrderBook(frame, koreaBusinessDate(this.#now()));
       for (const snapshot of snapshots) {
+        const canonicalSnapshot = {
+          ...snapshot,
+          instrumentId: this.#instrumentId,
+        };
         this.#projection = MarketLiveProjectionSchema.parse({
           ...this.#projection,
           connectionStatus: "live",
           freshness: "live",
-          coverage: coverage(snapshot, this.#projection.trade),
-          orderBook: snapshot,
+          coverage: coverage(canonicalSnapshot, this.#projection.trade),
+          orderBook: canonicalSnapshot,
           asOf: receivedAt,
           lastReceivedAt: receivedAt,
           lastOrderBookReceivedAt: receivedAt,
@@ -474,19 +523,36 @@ export class DomesticKisLiveStream {
         this.#emitEvent({
           kind: "ORDER_BOOK",
           receivedAt,
-          data: snapshot,
+          data: canonicalSnapshot,
         });
         this.#emitProjection();
       }
-    } else if (frame.trId === KIS_TR.domesticTrade) {
-      const ticks = normalizeDomesticTrade(frame);
+    } else if (
+      frame.trId === KIS_TR.domesticTrade ||
+      frame.trId === KIS_TR.domesticNxtTrade ||
+      frame.trId === KIS_TR.usTrade
+    ) {
+      const ticks =
+        frame.trId === KIS_TR.usTrade
+          ? normalizeUsTrade(frame, this.#options.venue ?? "NASDAQ")
+          : frame.trId === KIS_TR.domesticNxtTrade
+          ? normalizeNxtTrade(frame)
+          : normalizeDomesticTrade(frame);
       for (const tick of ticks) {
+        const canonicalTick = {
+          ...tick,
+          instrumentId: this.#instrumentId,
+          session:
+            frame.trId === KIS_TR.usTrade
+              ? resolveUsEquitySession(this.#now())
+              : tick.session,
+        };
         this.#projection = MarketLiveProjectionSchema.parse({
           ...this.#projection,
           connectionStatus: "live",
           freshness: "live",
-          coverage: coverage(this.#projection.orderBook, tick),
-          trade: tick,
+          coverage: coverage(this.#projection.orderBook, canonicalTick),
+          trade: canonicalTick,
           asOf: receivedAt,
           lastReceivedAt: receivedAt,
           lastTradeReceivedAt: receivedAt,
@@ -495,11 +561,11 @@ export class DomesticKisLiveStream {
         this.#emitEvent({
           kind: "TRADE",
           receivedAt,
-          data: tick,
+          data: canonicalTick,
         });
         this.#emitProjection();
       }
-    } else {
+    } else if (frame.trId !== KIS_TR.domesticNxtMarketStatus) {
       throw safeError("KIS_WS_PROTOCOL_ERROR", false);
     }
     this.#scheduleFreshnessCheck();

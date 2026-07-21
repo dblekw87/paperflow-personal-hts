@@ -464,6 +464,47 @@ CREATE INDEX domestic_orderbook_snapshots_captured_idx
   ON domestic_orderbook_snapshots(captured_at DESC, instrument_id);
 `;
 
+const DOMESTIC_VENUE_TRADE_SNAPSHOT_SCHEMA_SQL = `
+CREATE TABLE domestic_venue_trade_snapshots (
+  instrument_id TEXT NOT NULL CHECK(instrument_id GLOB 'KRX:*'),
+  venue TEXT NOT NULL CHECK(venue IN ('KRX', 'NXT')),
+  price TEXT NOT NULL CHECK(price GLOB '[1-9]*'),
+  change_amount TEXT,
+  change_rate TEXT,
+  provider_date TEXT,
+  provider_time TEXT NOT NULL CHECK(length(provider_time) = 6),
+  provider_received_at TEXT NOT NULL,
+  captured_at TEXT NOT NULL,
+  PRIMARY KEY(instrument_id, venue)
+) STRICT;
+
+CREATE INDEX domestic_venue_trade_snapshots_captured_idx
+  ON domestic_venue_trade_snapshots(captured_at DESC, instrument_id, venue);
+`;
+
+const DOMESTIC_ORDERBOOK_VENUE_SCHEMA_SQL = `
+ALTER TABLE domestic_orderbook_snapshots RENAME TO domestic_orderbook_snapshots_v6;
+CREATE TABLE domestic_orderbook_snapshots (
+  instrument_id TEXT NOT NULL CHECK(instrument_id GLOB 'KRX:*'),
+  venue TEXT NOT NULL CHECK(venue IN ('KRX', 'NXT')),
+  bids_json TEXT NOT NULL CHECK(json_valid(bids_json)),
+  asks_json TEXT NOT NULL CHECK(json_valid(asks_json)),
+  total_bid_quantity TEXT,
+  total_ask_quantity TEXT,
+  provider_time TEXT NOT NULL CHECK(length(provider_time) = 6),
+  provider_received_at TEXT NOT NULL,
+  captured_at TEXT NOT NULL,
+  PRIMARY KEY(instrument_id, venue)
+) STRICT;
+INSERT INTO domestic_orderbook_snapshots
+SELECT instrument_id, venue, bids_json, asks_json, total_bid_quantity,
+       total_ask_quantity, provider_time, provider_received_at, captured_at
+  FROM domestic_orderbook_snapshots_v6;
+DROP TABLE domestic_orderbook_snapshots_v6;
+CREATE INDEX domestic_orderbook_snapshots_captured_idx
+  ON domestic_orderbook_snapshots(captured_at DESC, instrument_id, venue);
+`;
+
 function defineMigration(
   version: number,
   name: string,
@@ -499,6 +540,16 @@ export const MIGRATIONS: readonly Migration[] = [
     6,
     "last_real_domestic_orderbook_snapshots",
     DOMESTIC_ORDERBOOK_SNAPSHOT_SCHEMA_SQL,
+  ),
+  defineMigration(
+    7,
+    "last_real_domestic_venue_trade_snapshots",
+    DOMESTIC_VENUE_TRADE_SNAPSHOT_SCHEMA_SQL,
+  ),
+  defineMigration(
+    8,
+    "domestic_orderbook_snapshots_per_venue",
+    DOMESTIC_ORDERBOOK_VENUE_SCHEMA_SQL,
   ),
 ];
 

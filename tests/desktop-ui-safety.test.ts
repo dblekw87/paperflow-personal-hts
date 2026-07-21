@@ -28,7 +28,8 @@ describe("desktop HTS UI safety invariants", () => {
     expect(orderBook).toBeGreaterThan(gridStart);
     expect(chart).toBeGreaterThan(orderBook);
     expect(ticket).toBe(-1);
-    expect(app).toContain('depthLabel={isReferenceOrderBook');
+    expect(app).toContain('isUsOneLevelBook');
+    expect(app).toContain('"미국 실제 1호가 + 참고 가격대"');
     expect(app).toContain('"KRX 10호가"');
     expect(app).toContain('"잔량 미수신"');
   });
@@ -82,7 +83,7 @@ describe("desktop HTS UI safety invariants", () => {
     expect(app).toContain("submitOrderBookLevel");
     expect(app).not.toContain("QUICK_ORDER_ARM_MS");
     expect(app).not.toContain("isConfirmed");
-    expect(app).toContain("desktop.selectInstrument(item.symbol)");
+    expect(app).toContain("desktop.selectInstrument(rankingSelection)");
     expect(app).toContain('setWorkspacePage("DASHBOARD")');
     expect(preload).toContain("marketSelectInstrument");
     expect(preload).toContain("selectInstrument: async");

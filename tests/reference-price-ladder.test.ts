@@ -1,8 +1,16 @@
 import { describe, expect, it } from "vitest";
 
-import { buildReferencePriceLadder } from "../apps/desktop/src/renderer/features/orderbook/reference-price-ladder.js";
+import { buildReferencePriceLadder, buildUsOneLevelPriceLadder } from "../apps/desktop/src/renderer/features/orderbook/reference-price-ladder.js";
 
 describe("reference price ladder", () => {
+  it("expands an actual US top of book with non-tradable cent reference levels", () => {
+    const ladder = buildUsOneLevelPriceLadder({ bestAskPrice: "325.0100", bestAskQuantity: "18", bestBidPrice: "325.0000", bestBidQuantity: "5", previousClosePrice: "306.10" });
+    expect(ladder.asks).toHaveLength(10);
+    expect(ladder.asks.at(-1)).toMatchObject({ price: "325.01", quantity: "18", referenceOnly: false });
+    expect(ladder.asks[0]).toMatchObject({ price: "325.10", quantity: "—", referenceOnly: true });
+    expect(ladder.bids[0]).toMatchObject({ price: "325.00", quantity: "5", referenceOnly: false });
+    expect(ladder.bids.at(-1)).toMatchObject({ price: "324.91", quantity: "—", referenceOnly: true });
+  });
   it("builds ten display-only KOSDAQ stock levels around the real anchor", () => {
     const ladder = buildReferencePriceLadder({
       anchorPrice: "15970",

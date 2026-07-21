@@ -139,6 +139,50 @@ async function eventually(
 }
 
 describe("DomesticKisLiveStream", () => {
+  it("subscribes to US one-level book and trade channels and publishes a USD three-session projection", async () => {
+    const events: unknown[] = [];
+    const socket = new FakeWebSocket();
+    installPositiveAcknowledgements(socket, () => {
+      socket.deliver(SYNTHETIC_FIXTURES.usOrderBook);
+      socket.deliver(SYNTHETIC_FIXTURES.usTrade);
+    });
+    const stream = new DomesticKisLiveStream(
+      createOptions(() => socket.asWebSocket(), {
+        environment: "prod",
+        symbol: "AAPL",
+        venue: "NASDAQ",
+        providerExchange: "NAS",
+        now: () => new Date("2026-07-20T14:15:30.000Z"),
+        onEvent: (event) => events.push(event),
+      }),
+    );
+
+    const started = stream.start();
+    queueMicrotask(() => socket.open());
+    await started;
+    await eventually(() => events.length === 2);
+
+    expect(stream.getProjection()).toMatchObject({
+      instrumentId: "NASDAQ:AAPL",
+      connectionStatus: "live",
+      freshness: "live",
+      coverage: "complete",
+      acknowledged: { orderBook: true, trade: true },
+      orderBook: {
+        venue: "NASDAQ",
+        bids: [{ price: "250.120", quantity: "100" }],
+        asks: [{ price: "250.130", quantity: "90" }],
+      },
+      trade: { venue: "NASDAQ", price: "250.125", session: "REGULAR" },
+    });
+    const subscriptions = socket.sent.map((raw) =>
+      (JSON.parse(raw) as SubscriptionRequest).body.input,
+    );
+    expect(subscriptions).toContainEqual({ tr_id: KIS_TR.usOrderBook, tr_key: "DNASAAPL" });
+    expect(subscriptions).toContainEqual({ tr_id: KIS_TR.usTrade, tr_key: "DNASAAPL" });
+    await stream.stop();
+  });
+
   it("requires positive ACKs and publishes a frozen combined canonical projection", async () => {
     const events: unknown[] = [];
     const projections: unknown[] = [];

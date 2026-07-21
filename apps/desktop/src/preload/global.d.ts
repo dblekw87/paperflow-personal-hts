@@ -47,6 +47,9 @@ declare global {
       readonly selectInstrument: (
         symbol: string,
       ) => Promise<Readonly<DesktopMarketProjection>>;
+      readonly getWatchlistQuotes: (
+        symbols: readonly string[],
+      ) => Promise<readonly Readonly<import("../shared/desktop-contracts.js").DesktopWatchlistQuoteProjection>[]>;
       readonly onProjection: (
         listener: (projection: Readonly<DesktopMarketProjection>) => void,
       ) => () => void;
@@ -61,7 +64,8 @@ declare global {
       ) => () => void;
     };
     readonly rankings: {
-      readonly getDomestic: (
+      readonly get: (
+        market: "KRX" | "US",
         sort: DesktopRankingSort,
       ) => Promise<Readonly<DesktopRankingProjection>>;
     };
@@ -70,6 +74,9 @@ declare global {
     };
     readonly instruments: {
       readonly searchDomestic: (
+        query: string,
+      ) => Promise<Readonly<DesktopInstrumentSearchProjection>>;
+      readonly searchUs: (
         query: string,
       ) => Promise<Readonly<DesktopInstrumentSearchProjection>>;
     };

@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
+import { strToU8, zipSync } from "fflate";
 
-import { OpenDartClient } from "../src/disclosures/open-dart-client.js";
+import {
+  OpenDartClient,
+  parseOpenDartCorpCodes,
+} from "../src/disclosures/open-dart-client.js";
 
 describe("OpenDartClient", () => {
   it("normalizes filing dates without inventing a filing time", async () => {
@@ -73,5 +77,69 @@ describe("OpenDartClient", () => {
     await expect(
       client.listFilings({ beginDate: "20260720", endDate: "20260720" }),
     ).resolves.toMatchObject({ items: [], totalCount: 0 });
+  });
+
+  it("collects every page and deduplicates by receipt number", async () => {
+    const fetchImplementation = vi.fn(async (input: unknown) => {
+      const page = Number(new URL(String(input)).searchParams.get("page_no"));
+      const receipt = page === 1 ? "20260720000001" : "20260720000002";
+      return new Response(
+        JSON.stringify({
+          status: "000",
+          message: "정상",
+          page_no: page,
+          page_count: 100,
+          total_count: 2,
+          total_page: 2,
+          list: [
+            {
+              corp_code: "00126380",
+              corp_name: "삼성전자",
+              stock_code: "005930",
+              corp_cls: "Y",
+              report_nm: "공시",
+              rcept_no: receipt,
+              flr_nm: "삼성전자",
+              rcept_dt: "20260720",
+              rm: "",
+            },
+          ],
+        }),
+      );
+    }) as typeof fetch;
+    const client = new OpenDartClient({
+      credentials: { crtfcKey: "a".repeat(40) },
+      fetchImplementation,
+    });
+    const result = await client.listAllFilings({
+      beginDate: "20260720",
+      endDate: "20260720",
+    });
+    expect(result).toMatchObject({
+      pagesFetched: 2,
+      paginationComplete: true,
+      totalCount: 2,
+    });
+    expect(result.items.map((item) => item.providerFilingId)).toEqual([
+      "20260720000001",
+      "20260720000002",
+    ]);
+  });
+
+  it("reads the official corp-code zip and preserves listed stock mappings", async () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?><result>
+      <list><corp_code>00126380</corp_code><corp_name>삼성&amp;전자</corp_name><stock_code>005930</stock_code><modify_date>20260720</modify_date></list>
+      <list><corp_code>00000001</corp_code><corp_name>비상장</corp_name><stock_code> </stock_code><modify_date>20260719</modify_date></list>
+    </result>`;
+    expect(parseOpenDartCorpCodes(xml)).toMatchObject([
+      { corpCode: "00126380", corpName: "삼성&전자", stockCode: "005930" },
+      { corpCode: "00000001", stockCode: null },
+    ]);
+    const archive = zipSync({ "CORPCODE.xml": strToU8(xml) });
+    const client = new OpenDartClient({
+      credentials: { crtfcKey: "a".repeat(40) },
+      fetchImplementation: vi.fn(async () => new Response(archive)) as typeof fetch,
+    });
+    await expect(client.listCorpCodes()).resolves.toHaveLength(2);
   });
 });

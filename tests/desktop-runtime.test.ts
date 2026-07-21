@@ -142,6 +142,41 @@ function liveProjection(
   };
 }
 
+function usLiveProjection(receivedAt: string): MarketLiveProjection {
+  return {
+    ...liveProjection(receivedAt, "100", "1"),
+    instrumentId: "NASDAQ:AAPL",
+    environment: "prod",
+    orderBook: {
+      instrumentId: "NASDAQ:AAPL",
+      venue: "NASDAQ",
+      bids: [{ price: "250.12", quantity: "100" }],
+      asks: [{ price: "250.13", quantity: "90" }],
+      totalBidQuantity: "100",
+      totalAskQuantity: "90",
+      occurredAt: receivedAt,
+      providerDate: "20260720",
+      providerTime: "101500",
+      source: "KIS_WS",
+    },
+    trade: {
+      instrumentId: "NASDAQ:AAPL",
+      venue: "NASDAQ",
+      session: "REGULAR",
+      price: "250.125",
+      quantity: "1",
+      change: null,
+      changeRate: null,
+      cumulativeVolume: "100",
+      cumulativeTurnover: null,
+      occurredAt: receivedAt,
+      providerDate: "20260720",
+      providerTime: "101500",
+      source: "KIS_WS",
+    },
+  };
+}
+
 function advancedQueueProjection(
   cumulativeVolume: string,
   quantity: string,
@@ -236,6 +271,7 @@ describe("Electron desktop runtime boundary", () => {
         quantity: "2",
         limitPrice: null,
       });
+      expect(result.rejectionCode).toBe(null);
 
       expect(result).toMatchObject({
         accepted: true,
@@ -255,6 +291,42 @@ describe("Electron desktop runtime boundary", () => {
       expect(result.market.asks).toEqual(before.asks);
       expect(result.market.totalBidQuantity).toBe(before.totalBidQuantity);
       expect(result.market.totalAskQuantity).toBe(before.totalAskQuantity);
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("fills a US market order locally in USD minor units without changing the KRW ledger", async () => {
+    const userDataPath = mkdtempSync(join(tmpdir(), "desktop-usd-fill-"));
+    temporaryDirectories.push(userDataPath);
+    const runtime = createRuntime(userDataPath);
+    try {
+      runtime.applyReadOnlyMarketProjection(usLiveProjection(new Date().toISOString()));
+      const result = runtime.submitPaperOrder({
+        requestId: "local-us-market-buy-1",
+        instrumentId: "NASDAQ:AAPL",
+        side: "BUY",
+        orderType: "MARKET",
+        quantity: "1",
+        limitPrice: null,
+      });
+
+      expect(result).toMatchObject({
+        accepted: true,
+        status: "FILLED",
+        account: {
+          baseCurrency: "USD",
+          cashMinor: "9974983",
+          positions: [{ instrumentId: "NASDAQ:AAPL", quantity: "1", averagePrice: "250.13" }],
+        },
+      });
+      const stored = openUserDataDatabase(userDataPath);
+      const balances = new LocalPaperTradingRepository(stored.database).getAccountSummary("personal-paper-account").cashBalances;
+      expect(balances).toEqual(expect.arrayContaining([
+        expect.objectContaining({ currency: "KRW", availableMinor: "100000000" }),
+        expect.objectContaining({ currency: "USD", availableMinor: "9974983" }),
+      ]));
+      stored.database.close();
     } finally {
       await runtime.close();
     }
@@ -353,7 +425,7 @@ describe("Electron desktop runtime boundary", () => {
     const runtime = createRuntime(userDataPath);
     try {
       await expect(runtime.selectInstrument("../005930")).rejects.toThrow(
-        "Unsupported domestic instrument symbol",
+        "Unsupported instrument symbol",
       );
       expect(runtime.getBootstrap().market.instrumentId).toBe("KRX:005930");
     } finally {
@@ -367,6 +439,7 @@ describe("Electron desktop runtime boundary", () => {
       mode: "KIS_READ_ONLY" as const,
       connectionState: "LIVE" as const,
       freshness: "live" as const,
+      venue: "KRX",
       session: "REGULAR" as const,
       orderBookReceivedAt: "2026-07-20T06:09:59.000Z",
       tradeReceivedAt: "2026-07-20T06:09:59.500Z",
@@ -375,11 +448,45 @@ describe("Electron desktop runtime boundary", () => {
     };
     expect(isDesktopPaperMarketExecutable(executable, now)).toBe(true);
     expect(
+      isDesktopPaperMarketExecutable(
+        {
+          ...executable,
+          venue: "NASDAQ",
+          session: "PRE",
+          orderBookReceivedAt: "2026-07-20T06:09:10.000Z",
+        },
+        now,
+      ),
+    ).toBe(true);
+    expect(
+      isDesktopPaperMarketExecutable(
+        {
+          ...executable,
+          venue: "NASDAQ",
+          session: "PRE",
+          orderBookReceivedAt: "2026-07-20T06:08:59.999Z",
+        },
+        now,
+      ),
+    ).toBe(false);
+    expect(
       isDesktopPaperMarketExecutable({ ...executable, session: "PRE" }, now),
     ).toBe(false);
     expect(
       isDesktopPaperMarketExecutable({ ...executable, session: "AFTER" }, now),
     ).toBe(false);
+    expect(
+      isDesktopPaperMarketExecutable(
+        { ...executable, venue: "NXT", session: "PRE" },
+        now,
+      ),
+    ).toBe(true);
+    expect(
+      isDesktopPaperMarketExecutable(
+        { ...executable, venue: "NXT", session: "AFTER" },
+        now,
+      ),
+    ).toBe(true);
     expect(
       isDesktopPaperMarketExecutable(
         { ...executable, freshness: "stale" },

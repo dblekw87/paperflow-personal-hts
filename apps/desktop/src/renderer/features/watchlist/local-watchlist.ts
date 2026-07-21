@@ -18,15 +18,19 @@ function isLocalWatchlistItem(value: unknown): value is LocalWatchlistItem {
   const item = value as Record<string, unknown>;
   return (
     typeof item["instrumentId"] === "string" &&
-    /^KRX:[0-9A-Z]{6,7}$/.test(item["instrumentId"]) &&
+    /^(?:KRX:[0-9A-Z]{6,7}|(?:NASDAQ|NYSE|AMEX):[A-Z0-9.-]{1,20})$/.test(
+      item["instrumentId"],
+    ) &&
     typeof item["symbol"] === "string" &&
-    item["instrumentId"] === `KRX:${item["symbol"]}` &&
+    item["instrumentId"].endsWith(`:${item["symbol"]}`) &&
     typeof item["name"] === "string" &&
     item["name"].length > 0 &&
     item["name"].length <= 120 &&
-    (item["market"] === null ||
+    (item["instrumentId"].startsWith("KRX:")
+      ? item["market"] === null ||
       item["market"] === "KOSPI" ||
-      item["market"] === "KOSDAQ") &&
+        item["market"] === "KOSDAQ"
+      : item["market"] === null) &&
     (item["securityType"] === null ||
       ["STOCK", "ETF", "ETN", "OTHER"].includes(
         String(item["securityType"]),

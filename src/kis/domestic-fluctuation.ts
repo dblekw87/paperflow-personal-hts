@@ -60,6 +60,7 @@ export interface DomesticFluctuationRanking {
 }
 
 export interface DomesticFluctuationRankingQuery {
+  readonly sortCode?: "0" | "1";
   readonly minimumRate?: string;
   readonly maximumRate?: string;
   readonly continuation?: "N";
@@ -115,10 +116,9 @@ export class KisDomesticFluctuationClient {
       fid_cond_mrkt_div_code: "J",
       fid_cond_scr_div_code: "20170",
       fid_input_iscd: "0000",
-      // KIS documents this screen as a four-character ranking selector.
-      // "0000" is the canonical gainers order; the shortened "0" can be
-      // interpreted inconsistently by the gateway.
-      fid_rank_sort_cls_code: "0000",
+      // KIS [v1_국내주식-088]: 0=상승률순, 1=하락률순. The production
+      // gateway rejects the former four-character value with INPUT_FILED_SIZE.
+      fid_rank_sort_cls_code: options?.sortCode ?? "0",
       fid_input_cnt_1: "30",
       fid_prc_cls_code: "0",
       fid_input_price_1: "",
@@ -195,6 +195,7 @@ export class KisDomesticFluctuationClient {
       throw new TypeError("maxPages must be an integer between 1 and 10");
     }
     const query = {
+      ...(options?.sortCode === undefined ? {} : { sortCode: options.sortCode }),
       ...(options?.minimumRate === undefined
         ? {}
         : { minimumRate: options.minimumRate }),

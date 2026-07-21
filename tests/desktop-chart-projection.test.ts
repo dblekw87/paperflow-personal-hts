@@ -35,6 +35,24 @@ function minuteProjection(): DesktopChartProjection {
 }
 
 describe("desktop chart IPC projection guard", () => {
+  it("accepts a US ticker and exact USD decimal candles", () => {
+    const projection = minuteProjection();
+    expect(isDesktopChartProjection({
+      ...projection,
+      instrumentId: "NASDAQ:AAPL",
+      turnoverQuality: "PROVIDER_REPORTED",
+      candles: [{
+        ...projection.candles[0],
+        id: "NASDAQ:AAPL:1m:2026-07-20T01:00:00.000Z",
+        open: "325.1200",
+        high: "325.4500",
+        low: "325.0100",
+        close: "325.3000",
+        volume: "1200",
+        turnover: "390360.0000",
+      }],
+    })).toBe(true);
+  });
   it("accepts a bounded canonical KIS minute projection", () => {
     expect(isDesktopChartProjection(minuteProjection())).toBe(true);
   });

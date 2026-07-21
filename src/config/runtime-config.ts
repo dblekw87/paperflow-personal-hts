@@ -45,6 +45,7 @@ const runtimeSchema = z.object({
   KIS_LIVE_ACK: z.string().optional(),
   DART_CRTFC_KEY: z.string().trim().optional(),
   SEC_USER_AGENT: z.string().trim().optional(),
+  FINNHUB_API_KEY: z.string().trim().optional(),
   PAPER_FILL_PROFILE: z
     .enum(["INITIAL_CONSERVATIVE_V1", "ADVANCED_QUEUE_V1"])
     .default("INITIAL_CONSERVATIVE_V1"),
@@ -67,6 +68,14 @@ export interface OpenDartCredentials {
 
 export interface SecRequestIdentity {
   userAgent: string;
+}
+
+export function requireFinnhubApiKey(config: RuntimeConfig): string {
+  const key = config.FINNHUB_API_KEY?.trim() ?? "";
+  if (!/^[A-Za-z0-9_-]{8,128}$/.test(key)) {
+    throw new Error("FINNHUB_PROVIDER_UNCONFIGURED");
+  }
+  return key;
 }
 
 let loaded = false;
@@ -209,6 +218,7 @@ export function publicConfig(config: RuntimeConfig) {
     paperQueueSafetyFactor: config.PAPER_QUEUE_SAFETY_FACTOR,
     hasOpenDartKey: hasOpenDartCredentials(config),
     hasSecUserAgent: hasSecRequestIdentity(config),
+    hasFinnhubApiKey: Boolean(config.FINNHUB_API_KEY?.trim()),
   };
 }
 

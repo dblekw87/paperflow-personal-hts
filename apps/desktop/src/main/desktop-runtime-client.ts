@@ -203,6 +203,13 @@ export class DesktopRuntimeClient {
     });
   }
 
+  public getWatchlistQuotes(symbols: readonly string[]) {
+    return this.#request<readonly import("../shared/desktop-contracts.js").DesktopWatchlistQuoteProjection[]>({
+      kind: "watchlist-quotes-get",
+      symbols,
+    });
+  }
+
   public async getChartHistory(
     interval: DesktopChartInterval,
     range: DesktopChartRange,
@@ -221,11 +228,13 @@ export class DesktopRuntimeClient {
     return projection;
   }
 
-  public async getDomesticRanking(
+  public async getRanking(
+    market: "KRX" | "US",
     sort: DesktopRankingSort,
   ): Promise<DesktopRankingProjection> {
     const projection = await this.#request<unknown>({
       kind: "ranking-get",
+      market,
       sort,
     });
     if (!isDesktopRankingProjection(projection)) {
@@ -259,6 +268,19 @@ export class DesktopRuntimeClient {
       throw new Error(
         "Desktop worker returned an invalid instrument search projection",
       );
+    }
+    return projection;
+  }
+
+  public async searchUsInstruments(
+    query: string,
+  ): Promise<DesktopInstrumentSearchProjection> {
+    const projection = await this.#request<unknown>(
+      { kind: "instrument-search", query, region: "US" },
+      30_000,
+    );
+    if (!isDesktopInstrumentSearchProjection(projection)) {
+      throw new Error("Desktop worker returned an invalid US instrument search projection");
     }
     return projection;
   }

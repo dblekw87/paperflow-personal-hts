@@ -10,6 +10,7 @@ import {
   isDesktopRankingProjection,
   isDesktopInvestorFlowProjection,
   isSearchableDomesticInstrumentQuery,
+  isSearchableUsInstrumentQuery,
   type DesktopAccountProjection,
   type DesktopBootstrapProjection,
   type DesktopChartInterval,
@@ -24,6 +25,7 @@ import {
   type DesktopRankingProjection,
   type DesktopRankingSort,
   type DesktopInvestorFlowProjection,
+  type DesktopWatchlistQuoteProjection,
 } from "../shared/desktop-contracts.js";
 
 const APP_METADATA_CHANNEL = DESKTOP_CHANNELS.appMetadata;
@@ -80,6 +82,17 @@ function isMarketProjection(value: unknown): value is DesktopMarketProjection {
     isStringOrNull(value["tradeOccurredAt"]) &&
     typeof value["sequence"] === "string" &&
     typeof value["statusMessage"] === "string"
+  );
+}
+
+function isWatchlistQuotes(value: unknown): value is readonly DesktopWatchlistQuoteProjection[] {
+  return Array.isArray(value) && value.every((quote) =>
+    isRecord(quote) &&
+    typeof quote["instrumentId"] === "string" &&
+    typeof quote["price"] === "string" &&
+    typeof quote["changeRate"] === "string" &&
+    typeof quote["cumulativeTurnover"] === "string" &&
+    typeof quote["receivedAt"] === "string"
   );
 }
 
@@ -261,8 +274,8 @@ const desktopApi = Object.freeze({
     selectInstrument: async (
       symbol: string,
     ): Promise<Readonly<DesktopMarketProjection>> => {
-      if (!/^[0-9A-Z]{6,7}$/.test(symbol)) {
-        throw new Error("Unsupported domestic instrument symbol.");
+      if (!/^(?:[0-9A-Z]{6,7}|(?:NAS|NYS|AMS):[A-Z0-9.-]{1,20})$/.test(symbol)) {
+        throw new Error("Unsupported instrument symbol.");
       }
       const result: unknown = await ipcRenderer.invoke(
         DESKTOP_CHANNELS.marketSelectInstrument,
@@ -272,6 +285,17 @@ const desktopApi = Object.freeze({
         throw new Error("Invalid market projection.");
       }
       return Object.freeze(result);
+    },
+    getWatchlistQuotes: async (symbols: readonly string[]) => {
+      if (symbols.length > 50 || !symbols.every((symbol) => /^[0-9A-Z]{6,7}$/.test(symbol))) {
+        throw new Error("Unsupported watchlist symbols.");
+      }
+      const result: unknown = await ipcRenderer.invoke(
+        DESKTOP_CHANNELS.watchlistQuotesGet,
+        [...symbols],
+      );
+      if (!isWatchlistQuotes(result)) throw new Error("Invalid watchlist quote projection.");
+      return Object.freeze(result.map((quote) => Object.freeze(quote)));
     },
     onProjection: (
       listener: (projection: Readonly<DesktopMarketProjection>) => void,
@@ -350,10 +374,11 @@ const desktopApi = Object.freeze({
     },
   }),
   rankings: Object.freeze({
-    getDomestic: async (
+    get: async (
+      market: "KRX" | "US",
       sort: DesktopRankingSort,
     ): Promise<Readonly<DesktopRankingProjection>> => {
-      if (
+      if (!["KRX", "US"].includes(market) ||
         ![
           "AVERAGE_VOLUME",
           "VOLUME_INCREASE",
@@ -366,6 +391,7 @@ const desktopApi = Object.freeze({
       }
       const result: unknown = await ipcRenderer.invoke(
         DESKTOP_CHANNELS.rankingGet,
+        market,
         sort,
       );
       if (!isDesktopRankingProjection(result)) {
@@ -399,6 +425,23 @@ const desktopApi = Object.freeze({
       );
       if (!isDesktopInstrumentSearchProjection(result)) {
         throw new Error("Invalid instrument search projection.");
+      }
+      return Object.freeze(result);
+    },
+    searchUs: async (
+      rawQuery: string,
+    ): Promise<Readonly<DesktopInstrumentSearchProjection>> => {
+      const query = rawQuery.trim();
+      if (!isSearchableUsInstrumentQuery(query)) {
+        throw new Error("Unsupported US instrument search query.");
+      }
+      const result: unknown = await ipcRenderer.invoke(
+        DESKTOP_CHANNELS.instrumentSearch,
+        query,
+        "US",
+      );
+      if (!isDesktopInstrumentSearchProjection(result)) {
+        throw new Error("Invalid US instrument search projection.");
       }
       return Object.freeze(result);
     },

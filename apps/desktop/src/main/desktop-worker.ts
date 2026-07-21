@@ -10,6 +10,7 @@ import type {
   DesktopPaperOrderResult,
   DesktopRankingProjection,
   DesktopInvestorFlowProjection,
+  DesktopWatchlistQuoteProjection,
 } from "../shared/desktop-contracts.js";
 import { DesktopRuntime } from "./desktop-runtime.js";
 
@@ -22,6 +23,7 @@ type WorkerCommand =
       readonly kind: "market-select-instrument";
       readonly symbol: unknown;
     }
+  | { readonly id: string; readonly kind: "watchlist-quotes-get"; readonly symbols: unknown }
   | {
       readonly id: string;
       readonly kind: "chart-history";
@@ -31,6 +33,7 @@ type WorkerCommand =
   | {
       readonly id: string;
       readonly kind: "ranking-get";
+      readonly market: unknown;
       readonly sort: unknown;
     }
   | { readonly id: string; readonly kind: "investor-flow-get" }
@@ -38,6 +41,7 @@ type WorkerCommand =
       readonly id: string;
       readonly kind: "instrument-search";
       readonly query: unknown;
+      readonly region?: unknown;
     }
   | {
       readonly id: string;
@@ -66,6 +70,7 @@ type WorkerResult =
   | DesktopPaperOrderResult
   | DesktopRankingProjection
   | DesktopInvestorFlowProjection
+  | readonly DesktopWatchlistQuoteProjection[]
   | null;
 
 function isWorkerCommand(value: unknown): value is WorkerCommand {
@@ -79,6 +84,7 @@ function isWorkerCommand(value: unknown): value is WorkerCommand {
       "market-connect",
       "market-disconnect",
       "market-select-instrument",
+      "watchlist-quotes-get",
       "chart-history",
       "ranking-get",
       "investor-flow-get",
@@ -134,17 +140,22 @@ process.on("message", (value: unknown) => {
       case "market-select-instrument":
         result = await runtime.selectInstrument(value.symbol);
         break;
+      case "watchlist-quotes-get":
+        result = await runtime.getWatchlistQuotes(value.symbols);
+        break;
       case "chart-history":
         result = await runtime.getChartHistory(value.interval, value.range);
         break;
       case "ranking-get":
-        result = await runtime.getDomesticRanking(value.sort);
+        result = await runtime.getRanking(value.market, value.sort);
         break;
       case "investor-flow-get":
         result = await runtime.getInvestorFlow();
         break;
       case "instrument-search":
-        result = await runtime.searchDomesticInstruments(value.query);
+        result = value.region === "US"
+          ? await runtime.searchUsInstruments(value.query)
+          : await runtime.searchDomesticInstruments(value.query);
         break;
       case "information-get":
         result = await runtime.getInformationFeed(

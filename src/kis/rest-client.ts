@@ -84,6 +84,35 @@ const orderBookResponseSchema = z
   })
   .loose();
 
+const overseasOrderBookPartSchema = z
+  .object({
+    last: z.string().optional(),
+    base: z.string().optional(),
+    open: z.string().optional(),
+    high: z.string().optional(),
+    low: z.string().optional(),
+    pbid1: z.string().optional(),
+    pask1: z.string().optional(),
+    vbid1: z.string().optional(),
+    vask1: z.string().optional(),
+    bvol: z.string().optional(),
+    avol: z.string().optional(),
+    dymd: z.string().optional(),
+    dhms: z.string().optional(),
+  })
+  .loose();
+
+const overseasOrderBookResponseSchema = z
+  .object({
+    rt_cd: z.string(),
+    msg_cd: z.string().optional(),
+    msg1: z.string().optional(),
+    output1: overseasOrderBookPartSchema.optional(),
+    output2: overseasOrderBookPartSchema.optional(),
+    output3: overseasOrderBookPartSchema.optional(),
+  })
+  .loose();
+
 export interface DomesticQuote {
   instrumentId: string;
   currency: "KRW";
@@ -111,6 +140,22 @@ export interface DomesticOrderBookSnapshot {
   receivedAt: string;
 }
 
+export interface OverseasQuoteAndOrderBookSnapshot {
+  instrumentId: string;
+  venue: "NASDAQ" | "NYSE" | "AMEX";
+  price: string;
+  previousClose: string | null;
+  openPrice: string | null;
+  highPrice: string | null;
+  lowPrice: string | null;
+  bids: readonly { readonly price: string; readonly quantity: string }[];
+  asks: readonly { readonly price: string; readonly quantity: string }[];
+  totalBidQuantity: string | null;
+  totalAskQuantity: string | null;
+  providerTime: string | null;
+  receivedAt: string;
+}
+
 function applyKisSign(value: string, signCode: string): string {
   const absolute = value.replace(/^[+-]/, "");
   return signCode === "4" || signCode === "5" ? `-${absolute}` : absolute;
@@ -129,6 +174,63 @@ export class KisRestClient {
     this.#environment = options.environment;
     this.#credentials = options.credentials;
     this.#getAccessToken = options.getAccessToken;
+  }
+
+  async getOverseasQuoteAndOrderBook(
+    exchange: "NAS" | "NYS" | "AMS",
+    symbol: string,
+  ): Promise<OverseasQuoteAndOrderBookSnapshot> {
+    if (this.#environment !== "prod" || !/^[A-Z0-9.\-]{1,20}$/.test(symbol)) {
+      throw new TypeError("Overseas quotes require prod data and a valid symbol");
+    }
+    const endpoint = getKisEndpoints(this.#environment);
+    const url = new URL(`${endpoint.restBaseUrl}${KIS_PATH.overseasOrderBookSnapshot}`);
+    url.search = new URLSearchParams({ AUTH: "", EXCD: exchange, SYMB: symbol }).toString();
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+          authorization: `Bearer ${await this.#getAccessToken()}`,
+          appkey: this.#credentials.appKey,
+          appsecret: this.#credentials.appSecret,
+          tr_id: KIS_TR.overseasOrderBookSnapshot,
+          custtype: "P",
+        },
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch (error) {
+      throw new KisApiError({ code: "KIS_NETWORK_ERROR", message: "KIS overseas order book is unreachable", retryable: true, cause: error });
+    }
+    const payload: unknown = await response.json().catch(() => undefined);
+    if (!response.ok) {
+      throw new KisApiError({ code: response.status === 429 ? "KIS_RATE_LIMITED" : "KIS_REST_FAILED", message: `KIS overseas order book failed with HTTP ${response.status}`, retryable: response.status >= 500 || response.status === 429, status: response.status });
+    }
+    const parsed = overseasOrderBookResponseSchema.safeParse(payload);
+    if (!parsed.success || parsed.data.rt_cd !== "0") {
+      throw new KisApiError({ code: parsed.success ? (parsed.data.msg_cd ?? "KIS_BUSINESS_ERROR") : "KIS_REST_SCHEMA_MISMATCH", message: parsed.success ? (parsed.data.msg1 ?? "KIS rejected the overseas order book request") : "KIS overseas order book response did not match the expected contract", retryable: false });
+    }
+    const output = { ...(parsed.data.output1 ?? {}), ...(parsed.data.output2 ?? {}), ...(parsed.data.output3 ?? {}) };
+    const price = output.last?.trim();
+    if (!price || price === "0") throw new KisApiError({ code: "KIS_REST_SCHEMA_MISMATCH", message: "KIS overseas order book omitted current price", retryable: false });
+    const bid = output.pbid1?.trim();
+    const ask = output.pask1?.trim();
+    const venue = exchange === "NAS" ? "NASDAQ" : exchange === "NYS" ? "NYSE" : "AMEX";
+    return {
+      instrumentId: `${venue}:${symbol}`,
+      venue,
+      price,
+      previousClose: output.base?.trim() || null,
+      openPrice: output.open?.trim() || null,
+      highPrice: output.high?.trim() || null,
+      lowPrice: output.low?.trim() || null,
+      bids: bid && bid !== "0" ? [{ price: bid, quantity: output.vbid1?.trim() || "0" }] : [],
+      asks: ask && ask !== "0" ? [{ price: ask, quantity: output.vask1?.trim() || "0" }] : [],
+      totalBidQuantity: output.bvol?.trim() || null,
+      totalAskQuantity: output.avol?.trim() || null,
+      providerTime: output.dhms?.trim() || null,
+      receivedAt: new Date().toISOString(),
+    };
   }
 
   async getDomesticCurrentPrice(symbol: string): Promise<DomesticQuote> {

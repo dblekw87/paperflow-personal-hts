@@ -44,6 +44,10 @@ type ExecutionMode = "LOCAL_SIMULATION";
 | 시가총액 순위               | `market_cap`                   | `/uapi/domestic-stock/v1/ranking/market-cap`                      |
 | 현재가 투자자               | `inquire_investor`             | `/uapi/domestic-stock/v1/quotations/inquire-investor`             |
 | 기관·외국인 집계            | `foreign_institution_total`    | `/uapi/domestic-stock/v1/quotations/foreign-institution-total`    |
+
+2026-07-21 실전 읽기 전용 재검증에서 `fluctuation`의
+`fid_rank_sort_cls_code`는 상승률 `0`, 하락률 `1`의 한 자리 값으로 확인했다.
+네 자리 `0000`은 gateway가 `INVALID INPUT_FILED_SIZE`로 거절한다.
 | 상품 정보                   | `search_info`                  | `/uapi/domestic-stock/v1/quotations/search-info`                  |
 | 시황/공시 제목              | `news_title`                   | `/uapi/domestic-stock/v1/quotations/news-title`                   |
 
@@ -70,6 +74,10 @@ type ExecutionMode = "LOCAL_SIMULATION";
 | 해외 속보 제목 | `brknews_title`               | `/uapi/overseas-price/v1/quotations/brknews-title`               |
 | 해외 뉴스 제목 | `news_title`                  | `/uapi/overseas-price/v1/quotations/news-title`                  |
 
+제품 runtime은 미국 순위 화면에서 `NAS`·`NYS`·`AMS`를 각각 조회한 뒤 canonical
+`NASDAQ`·`NYSE`·`AMEX` 종목으로 합친다. 거래대금·거래량·거래증가율·상승률·하락률은
+각 전용 REST 결과만 사용하며 미국 화면에 국내 KRX 순위를 섞지 않는다.
+
 경로와 함수가 공식 샘플과 MCP registry 사이에서 시차를 보일 수 있다. 실제 등록 전 샌드박스 호출, 응답 fixture, 포털 문서를 함께 확인한다.
 
 ## 4. WebSocket
@@ -83,6 +91,8 @@ type ExecutionMode = "LOCAL_SIMULATION";
 - KRX/NXT/통합 시장별 함수가 구분되어 있음
 
 해외 공식 샘플의 미국 호가는 `HDFSASP0`, 체결은 `HDFSCNT0`이다. 샘플 설명상 미국 호가는 무료 1호가이며 체결 지연·당일 시가 정정 같은 데이터 특성이 있을 수 있다. 미국 실시간 가능 여부, 지연 표시, 호가 깊이는 계정 권한·거래소에 따라 구현 스파이크에서 다시 검증한다.
+
+2026-07-21 제품 runtime은 `NAS/NYS/AMS + symbol`을 KIS 구독키로 사용하고 이를 각각 `NASDAQ/NYSE/AMEX` canonical venue로 정규화한다. 1호가 이후 깊이는 만들지 않으며 positive ACK를 받은 호가·체결 채널이 모두 fresh할 때만 로컬 모의체결을 허용한다. 실전 읽기 전용 data profile만 사용하고 KIS 주문 endpoint는 연결하지 않는다.
 
 국내·해외 선물 공식 샘플에서 다음 읽기 전용 채널이 확인된다.
 
@@ -155,6 +165,8 @@ Nasdaq 현물지수 REST, Nasdaq 상장 주식·ETF WebSocket, CME NQ/MNQ 선물
 ## 7. 종목 마스터
 
 공식 `stocks_info`와 KIS Trading MCP master loader를 참조해 KOSPI, KOSDAQ, KONEX 및 해외 거래소 마스터를 가져올 수 있다. MVP import 대상은 KOSPI, KOSDAQ, NASDAQ, NYSE, AMEX다.
+
+2026-07-21 미국 검색은 공식 `nasmst.cod`, `nysmst.cod`, `amsmst.cod` ZIP을 내려받아 CP949 탭 구분 계약으로 검증한다. 한글명·영문명·ticker를 통합 검색하며 24시간 로컬 cache와 마지막 검증본 fallback을 사용한다. 결과의 `NAS/NYS/AMS`는 각각 `NASDAQ/NYSE/AMEX` canonical venue와 실제 WebSocket 구독키로 함께 전달한다.
 
 마스터 업데이트는 앱 시작을 막지 않는 background job이며 version, source SHA/날짜, row count, checksum을 기록한다. 실패하면 마지막 성공 버전을 유지한다.
 

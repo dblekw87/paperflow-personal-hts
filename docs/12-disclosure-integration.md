@@ -2,11 +2,13 @@
 
 ## 현재 구현 상태
 
-2026-07-20 기준 `DART_CRTFC_KEY` 40자 검증, SEC app/version + 실제 연락 이메일 형식 검증, 공개 health boolean, DART query/error redaction, OpenDART `/api/list.json` 읽기 전용 client와 `013` 빈 응답 처리가 구현되어 있다. OpenDART 응답의 `rcept_dt`는 `providerFiledAtPrecision: DATE`로 보존해 접수 시각을 추측하지 않는다.
+미국 종목 workspace에서는 현재 선택 ticker로 KIS 해외뉴스와 SEC ticker-CIK mapping을 다시 조회한다. 저장된 항목은 canonical 미국 instrument ID에 연결되므로 `선택 종목` 및 `관심 종목` 필터에서 함께 확인할 수 있다. 종목 전환 시 정보 cache를 무효화하며 SEC 원문 링크와 evidence ID를 유지한다.
 
-SEC EDGAR는 공식 ticker/CIK mapping과 issuer submissions를 조회하며 프로세스 공용 8 rps limiter, 403·429·5xx·network backoff, accession dedupe를 적용한다. KIS 국내·미국 뉴스 제목, SEC 공시 metadata, OpenDART 당일 첫 페이지는 SQLite v5의 불변 정보 원본·별도 번역 version·poll checkpoint에 저장되고 Electron 뉴스·공시 페이지에 투영된다. 페이지가 열린 동안 60초 주기로 근실시간 갱신하며 SEC form 명칭과 item 번호는 `PARTIAL` 한국어 번역으로 표시한다. `DART_CRTFC_KEY`가 없으면 provider를 `UNCONFIGURED`로 유지하고 키 저장 후 앱을 다시 시작하면 자동 활성화한다.
+2026-07-21 기준 `DART_CRTFC_KEY` 40자 검증, SEC app/version + 실제 연락 이메일 형식 검증, 공개 health boolean, DART query/error redaction, OpenDART `/api/list.json` 읽기 전용 client와 `013` 빈 응답 처리가 구현되어 있다. OpenDART 응답의 `rcept_dt`는 `providerFiledAtPrecision: DATE`로 보존해 접수 시각을 추측하지 않는다.
 
-아직 구현되지 않은 범위는 OpenDART 전체 pagination/overlap reconciliation, SEC latest filings 시장 watcher, 관심종목 전체 CIK scheduler, 공시 원문 분류·본문 전체 한국어 번역 queue다. KIS 뉴스는 권리 범위를 제목으로 제한하며 Reuters 본문을 수집하지 않는다.
+SEC EDGAR는 공식 ticker/CIK mapping과 issuer submissions를 조회하며 프로세스 공용 8 rps limiter, 403·429·5xx·network backoff, accession dedupe를 적용한다. KIS 국내·미국 뉴스 제목, SEC 공시 metadata, OpenDART 당일 공시는 SQLite v5의 불변 정보 원본·별도 번역 version·poll checkpoint에 저장되고 Electron 뉴스·공시 페이지에 투영된다. OpenDART는 최초 및 15분 주기로 전체 pagination을 reconciliation하고 그 사이에는 최신 100건을 확인하며 `rcept_no`로 dedupe한다. `/api/corpCode.xml` 원장은 하루 한 번 받아 `corp_code → stock_code` 보조 매핑에 사용하고 뉴스 화면에서 전체·선택 종목·관심 종목 필터를 제공한다. 페이지가 열린 동안 60초 주기로 근실시간 갱신하며 SEC form 명칭과 item 번호는 `PARTIAL` 한국어 번역으로 표시한다. `DART_CRTFC_KEY`가 없으면 provider를 `UNCONFIGURED`로 유지하고 키 저장 후 앱을 다시 시작하면 자동 활성화한다.
+
+아직 구현되지 않은 범위는 SEC latest filings 시장 watcher, 관심종목 전체 CIK scheduler, OpenDART 정정 공시 relation 및 상세 주요사항 API, 공시 원문 분류·본문 전체 한국어 번역 queue다. KIS 뉴스는 권리 범위를 제목으로 제한하며 Reuters 본문을 수집하지 않는다.
 
 ## 1. 목표
 

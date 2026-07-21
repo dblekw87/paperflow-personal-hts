@@ -15,6 +15,7 @@ import {
   DESKTOP_CHANNELS,
   isAllowedExternalInformationUrl,
   isSearchableDomesticInstrumentQuery,
+  isSearchableUsInstrumentQuery,
   type DesktopChartInterval,
   type DesktopChartRange,
   type DesktopRankingSort,
@@ -364,6 +365,7 @@ function registerDesktopIpc(runtime: DesktopRuntimeClient): void {
     DESKTOP_CHANNELS.marketConnect,
     DESKTOP_CHANNELS.marketDisconnect,
     DESKTOP_CHANNELS.marketSelectInstrument,
+    DESKTOP_CHANNELS.watchlistQuotesGet,
     DESKTOP_CHANNELS.chartGetHistory,
     DESKTOP_CHANNELS.rankingGet,
     DESKTOP_CHANNELS.investorFlowGet,
@@ -400,10 +402,20 @@ function registerDesktopIpc(runtime: DesktopRuntimeClient): void {
       if (!isTrustedIpcSender(event)) {
         throw new Error("Untrusted renderer frame.");
       }
-      if (typeof symbol !== "string" || !/^[0-9A-Z]{6,7}$/.test(symbol)) {
-        throw new Error("Unsupported domestic instrument symbol.");
+      if (typeof symbol !== "string" || !/^(?:[0-9A-Z]{6,7}|(?:NAS|NYS|AMS):[A-Z0-9.-]{1,20})$/.test(symbol)) {
+        throw new Error("Unsupported instrument symbol.");
       }
       return runtime.selectInstrument(symbol);
+    },
+  );
+  ipcMain.handle(
+    DESKTOP_CHANNELS.watchlistQuotesGet,
+    async (event, symbols: unknown) => {
+      if (!isTrustedIpcSender(event)) throw new Error("Untrusted renderer frame.");
+      if (!Array.isArray(symbols) || symbols.length > 50 || !symbols.every((symbol) => typeof symbol === "string" && /^[0-9A-Z]{6,7}$/.test(symbol))) {
+        throw new Error("Unsupported watchlist symbols.");
+      }
+      return runtime.getWatchlistQuotes(symbols);
     },
   );
   ipcMain.handle(
@@ -445,11 +457,11 @@ function registerDesktopIpc(runtime: DesktopRuntimeClient): void {
   );
   ipcMain.handle(
     DESKTOP_CHANNELS.rankingGet,
-    async (event, sort: unknown) => {
+    async (event, market: unknown, sort: unknown) => {
       if (!isTrustedIpcSender(event)) {
         throw new Error("Untrusted renderer frame.");
       }
-      if (
+      if (!["KRX", "US"].includes(String(market)) ||
         typeof sort !== "string" ||
         ![
           "AVERAGE_VOLUME",
@@ -461,7 +473,7 @@ function registerDesktopIpc(runtime: DesktopRuntimeClient): void {
       ) {
         throw new Error("Unsupported ranking sort.");
       }
-      return runtime.getDomesticRanking(sort as DesktopRankingSort);
+      return runtime.getRanking(market as "KRX" | "US", sort as DesktopRankingSort);
     },
   );
   ipcMain.handle(DESKTOP_CHANNELS.investorFlowGet, async (event) => {
@@ -472,16 +484,21 @@ function registerDesktopIpc(runtime: DesktopRuntimeClient): void {
   });
   ipcMain.handle(
     DESKTOP_CHANNELS.instrumentSearch,
-    async (event, query: unknown) => {
+    async (event, query: unknown, region: unknown = "KR") => {
       if (!isTrustedIpcSender(event)) {
         throw new Error("Untrusted renderer frame.");
       }
       if (
-        !isSearchableDomesticInstrumentQuery(query)
+        (region === "US"
+          ? !isSearchableUsInstrumentQuery(query)
+          : !isSearchableDomesticInstrumentQuery(query))
       ) {
         throw new Error("Unsupported instrument search query.");
       }
-      return runtime.searchDomesticInstruments(query.trim());
+      const normalizedQuery = String(query).trim();
+      return region === "US"
+        ? runtime.searchUsInstruments(normalizedQuery)
+        : runtime.searchDomesticInstruments(normalizedQuery);
     },
   );
   ipcMain.handle(

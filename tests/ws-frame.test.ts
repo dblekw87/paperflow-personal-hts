@@ -10,6 +10,7 @@ import {
 } from "../src/kis/ws/layouts.js";
 import {
   domesticSessionFromProviderTime,
+  nxtSessionFromProviderTime,
   normalizeDomesticOrderBook,
   normalizeDomesticTrade,
   normalizeNxtOrderBook,
@@ -19,8 +20,35 @@ import {
 } from "../src/kis/ws/normalize.js";
 import { syntheticWsFrame } from "../src/testkit/synthetic-fixtures.js";
 import { PINNED_PROTOCOL_VECTORS } from "../src/testkit/pinned-protocol-vectors.js";
+import { US_ORDERBOOK_OBSERVED_FIELDS, US_TRADE_OBSERVED_FIELDS } from "../src/kis/ws/layouts.js";
 
 describe("KIS WebSocket frame contracts", () => {
+  it("accepts the exact observed KIS prod US depth and RSYM layouts", () => {
+    const bookPrefix: Record<string, string> = { rsym: "DNASAAPL", symb: "AAPL", pbid1: "325.10", pask1: "325.11", vbid1: "10", vask1: "12", bvol: "100", avol: "120" };
+    for (let level = 2; level <= 10; level += 1) {
+      bookPrefix[`pbid${level}`] = String(325.10 - level / 100);
+      bookPrefix[`pask${level}`] = String(325.11 + level / 100);
+      bookPrefix[`vbid${level}`] = String(level * 10);
+      bookPrefix[`vask${level}`] = String(level * 12);
+      bookPrefix[`dbid${level}`] = "0";
+      bookPrefix[`dask${level}`] = "0";
+    }
+    const bookValues = US_ORDERBOOK_OBSERVED_FIELDS.map((field) => bookPrefix[field] ?? "");
+    const book = parseKisWsFrame(`0|${KIS_TR.usOrderBook}|001|${bookValues.join("^")}`);
+    expect(book.kind).toBe("DATA");
+    if (book.kind !== "DATA") throw new Error("Expected data frame");
+    const normalizedBook = normalizeUsOrderBook(book, "NASDAQ")[0];
+    expect(normalizedBook).toMatchObject({ instrumentId: "NASDAQ:AAPL" });
+    expect(normalizedBook?.bids).toHaveLength(10);
+    expect(normalizedBook?.asks).toHaveLength(10);
+
+    const tradePrefix: Record<string, string> = { RSYM: "DNASAAPL", SYMB: "AAPL", LAST: "325.11", EVOL: "2", TVOL: "1000", STRN: "76.53" };
+    const tradeValues = US_TRADE_OBSERVED_FIELDS.map((field) => tradePrefix[field] ?? "");
+    const trade = parseKisWsFrame(`0|${KIS_TR.usTrade}|001|${tradeValues.join("^")}`);
+    expect(trade.kind).toBe("DATA");
+    if (trade.kind !== "DATA") throw new Error("Expected data frame");
+    expect(normalizeUsTrade(trade, "NASDAQ")[0]).toMatchObject({ price: "325.11", quantity: "2", executionStrength: "76.53" });
+  });
   it("parses and normalizes all four read-only market-data layouts", () => {
     const domesticTrade = parseKisWsFrame(
       PINNED_PROTOCOL_VECTORS.domesticTrade.raw,
@@ -203,7 +231,7 @@ describe("KIS WebSocket frame contracts", () => {
     expect(normalizeNxtTrade(tradeFrame)[0]).toMatchObject({
       instrumentId: "NXT:005930",
       venue: "NXT",
-      session: "UNKNOWN",
+      session: "AFTER",
       price: "244000",
     });
   });
@@ -216,6 +244,17 @@ describe("KIS WebSocket frame contracts", () => {
     expect(domesticSessionFromProviderTime("154000")).toBe("AFTER");
     expect(domesticSessionFromProviderTime("180001")).toBe("CLOSED");
     expect(domesticSessionFromProviderTime("invalid")).toBe("UNKNOWN");
+  });
+
+  it("uses the official NXT pre, main and after-market execution windows", () => {
+    expect(nxtSessionFromProviderTime("080000")).toBe("PRE");
+    expect(nxtSessionFromProviderTime("085000")).toBe("CLOSED");
+    expect(nxtSessionFromProviderTime("090029")).toBe("CLOSED");
+    expect(nxtSessionFromProviderTime("090030")).toBe("REGULAR");
+    expect(nxtSessionFromProviderTime("152000")).toBe("CLOSED");
+    expect(nxtSessionFromProviderTime("153959")).toBe("CLOSED");
+    expect(nxtSessionFromProviderTime("154000")).toBe("AFTER");
+    expect(nxtSessionFromProviderTime("200001")).toBe("CLOSED");
   });
 
   it("fails closed for encrypted, unknown, short and long frames", () => {

@@ -6,6 +6,7 @@ import {
   requireKisCredentialsForEnvironment,
   publicConfig,
   requireOpenDartCredentials,
+  requireFinnhubApiKey,
   requireSecRequestIdentity,
   assertLiveReadOnlyAcknowledgement,
 } from "../../../../src/config/runtime-config.js";
@@ -27,6 +28,8 @@ import type {
 } from "../../../../src/contracts/market-history.js";
 import { KisAuthClient } from "../../../../src/kis/auth.js";
 import { KisDomesticChartClient } from "../../../../src/kis/domestic-chart.js";
+import { KisUsChartClient } from "../../../../src/kis/us-chart.js";
+import { KisUsRankingClient } from "../../../../src/kis/us-ranking.js";
 import {
   compareDailyVolumeRatioDescending,
   isUsableDailyRankingItem,
@@ -41,7 +44,12 @@ import {
   isSearchableDomesticInstrumentQuery,
   KisDomesticInstrumentMaster,
 } from "../../../../src/kis/domestic-instrument-master.js";
+import {
+  isSearchableUsInstrumentQuery,
+  KisUsInstrumentMaster,
+} from "../../../../src/kis/us-instrument-master.js";
 import { KisProdNewsClient } from "../../../../src/kis/news-headlines.js";
+import { FinnhubNewsClient } from "../../../../src/news/finnhub-client.js";
 import {
   KIS_DOMESTIC_INDEX_SELECTIONS,
   KIS_US_MARKET_PROXY_SELECTIONS,
@@ -52,7 +60,10 @@ import {
   SecEdgarClient,
   findSecIssuerMappings,
 } from "../../../../src/disclosures/sec-client.js";
-import { OpenDartClient } from "../../../../src/disclosures/open-dart-client.js";
+import {
+  OpenDartClient,
+  type OpenDartCorpCode,
+} from "../../../../src/disclosures/open-dart-client.js";
 import { KisRestClient } from "../../../../src/kis/rest-client.js";
 import { KisDomesticInvestorFlowClient } from "../../../../src/kis/domestic-investor-flow.js";
 import { DomesticKisLiveStream } from "../../../../src/kis/ws/live-stream.js";
@@ -85,6 +96,7 @@ import type {
   DesktopMarketProjection,
   DesktopMarketSession,
   DesktopInformationFeedProjection,
+  DesktopInformationItemProjection,
   DesktopInvestorFlowProjection,
   DesktopInstrumentSearchProjection,
   DesktopMarketContextItemProjection,
@@ -98,6 +110,7 @@ import { averagePaperPositionPrice } from "../shared/paper-valuation.js";
 
 const ACCOUNT_ID = "personal-paper-account";
 const DEFAULT_INITIAL_CASH_MINOR = "100000000";
+const DEFAULT_INITIAL_USD_CASH_MINOR = "10000000";
 const INSTRUMENT_NAME = "삼성전자";
 const FEE_RATE_PPM = 150n;
 const SELL_TAX_RATE_PPM = 1_500n;
@@ -233,7 +246,8 @@ function containsHangul(value: string): boolean {
   return /[가-힣]/.test(value);
 }
 
-function desktopPaperPolicy(): PaperFillPolicy {
+function desktopPaperPolicy(venue = "KRX"): PaperFillPolicy {
+  const isUs = ["NASDAQ", "NYSE", "AMEX"].includes(venue);
   return {
     maxMarketDataAgeMs: MAX_EXECUTION_MARKET_AGE_MS,
     passiveFillModel: "AT_OR_THROUGH",
@@ -243,25 +257,29 @@ function desktopPaperPolicy(): PaperFillPolicy {
     version: "DESKTOP_INITIAL_V1",
     tickRule: {
       kind: "FIXED",
-      venue: "KRX",
-      version: "KRX_WON_TICK_FALLBACK_V1",
+      venue,
+      version: isUs ? "US_CENT_TICK_V1" : "KRX_WON_TICK_FALLBACK_V1",
       effectiveFrom: "2026-01-01T00:00:00.000Z",
       effectiveTo: null,
-      tickSize: "1",
+      tickSize: isUs ? "0.01" : "1",
     },
-    minimumPrice: "1",
+    minimumPrice: isUs ? "0.01" : "1",
     maximumPrice: "1000000000",
   };
 }
 
-function isRecentProviderEvent(value: string | null, nowMs: number): boolean {
+function isRecentProviderEvent(
+  value: string | null,
+  nowMs: number,
+  maximumAgeMs = MAX_EXECUTION_MARKET_AGE_MS,
+): boolean {
   if (value === null) return false;
   const timestamp = Date.parse(value);
   const age = nowMs - timestamp;
   return (
     Number.isFinite(timestamp) &&
     age >= 0 &&
-    age <= MAX_EXECUTION_MARKET_AGE_MS
+    age <= maximumAgeMs
   );
 }
 
@@ -271,6 +289,7 @@ export function isDesktopPaperMarketExecutable(
     | "mode"
     | "connectionState"
     | "freshness"
+    | "venue"
     | "session"
     | "orderBookReceivedAt"
     | "tradeReceivedAt"
@@ -279,12 +298,21 @@ export function isDesktopPaperMarketExecutable(
   >,
   nowMs = Date.now(),
 ): boolean {
+  const isUsVenue = ["NASDAQ", "NYSE", "AMEX"].includes(market.venue);
   return (
     market.mode === "KIS_READ_ONLY" &&
     market.connectionState === "LIVE" &&
     market.freshness === "live" &&
-    market.session === "REGULAR" &&
-    isRecentProviderEvent(market.orderBookReceivedAt, nowMs) &&
+    (market.session === "REGULAR" ||
+      (market.venue === "NXT" &&
+        (market.session === "PRE" || market.session === "AFTER")) ||
+      (isUsVenue &&
+        (market.session === "PRE" || market.session === "AFTER"))) &&
+    isRecentProviderEvent(
+      market.orderBookReceivedAt,
+      nowMs,
+      isUsVenue ? 60_000 : MAX_EXECUTION_MARKET_AGE_MS,
+    ) &&
     isRecentProviderEvent(market.tradeReceivedAt, nowMs) &&
     market.bids.length > 0 &&
     market.asks.length > 0
@@ -296,11 +324,16 @@ function ceilRate(amount: bigint, ratePpm: bigint): bigint {
   return (amount * ratePpm + ONE_MILLION - 1n) / ONE_MILLION;
 }
 
-function krwDecimalToMinor(value: string): bigint {
-  if (!/^(?:0|[1-9]\d*)$/.test(value)) {
-    throw new Error("KRW paper execution requires a whole-won notional");
+function currencyDecimalToMinor(value: string, currency: string): bigint {
+  const scale = currency === "USD" ? 2 : currency === "KRW" ? 0 : null;
+  if (scale === null || !/^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value)) {
+    throw new Error("Unsupported paper execution currency or decimal");
   }
-  return BigInt(value);
+  const [whole, fraction = ""] = value.split(".");
+  if (fraction.length > scale) {
+    throw new Error("Paper execution exceeds the currency minor-unit scale");
+  }
+  return BigInt(`${whole}${fraction.padEnd(scale, "0")}`);
 }
 
 function safeStatusMessage(error: unknown): string {
@@ -349,7 +382,13 @@ function connectionState(
 export function resolveDesktopMarketSession(
   bookProviderTime: string | null,
   tradeSession: DesktopMarketSession | null,
+  venue = "KRX",
 ): DesktopMarketSession {
+  if (
+    (venue === "NXT" || ["NASDAQ", "NYSE", "AMEX"].includes(venue)) &&
+    tradeSession !== null
+  ) return tradeSession;
+  if (["NASDAQ", "NYSE", "AMEX"].includes(venue)) return "UNKNOWN";
   const bookSession = domesticSessionFromProviderTime(bookProviderTime ?? "");
   if (tradeSession === null) return bookSession;
   if (bookProviderTime === null || tradeSession === bookSession) {
@@ -364,16 +403,21 @@ function toDesktopMarketProjection(
 ): DesktopMarketProjection {
   const tick = projection.trade;
   const book = projection.orderBook;
+  const identityVenue = projection.instrumentId.split(":")[0] ?? "KRX";
+  const projectedVenue = book?.venue ?? tick?.venue ?? identityVenue;
   const session = resolveDesktopMarketSession(
     book?.providerTime ?? null,
     tick?.session ?? null,
+    projectedVenue,
   );
   return {
     schemaVersion: 1,
     instrumentId: projection.instrumentId,
     symbol: projection.instrumentId.split(":")[1] ?? "",
-    venue: book?.venue ?? tick?.venue ?? "KRX",
-    currency: "KRW",
+    venue: projectedVenue,
+    currency: ["NASDAQ", "NYSE", "AMEX"].includes(projectedVenue)
+      ? "USD"
+      : "KRW",
     mode: "KIS_READ_ONLY",
     connectionState: connectionState(projection),
     freshness:
@@ -443,6 +487,19 @@ function initialMarket(symbol: string): DesktopMarketProjection {
     sequence: "0",
     statusMessage:
       "합성 fixture fallback · KIS 읽기 전용 연결을 시작하지 않았습니다.",
+  };
+}
+
+function initialUsMarket(
+  symbol: string,
+  venue: "NASDAQ" | "NYSE" | "AMEX",
+): DesktopMarketProjection {
+  return {
+    ...initialMarket(symbol),
+    instrumentId: `${venue}:${symbol}`,
+    venue,
+    currency: "USD",
+    statusMessage: "KIS 미국 읽기 전용 실시간 시세 연결을 시작하지 않았습니다.",
   };
 }
 
@@ -641,14 +698,15 @@ function validatePaperRequest(value: unknown): DesktopPaperOrderRequest {
     typeof request.requestId !== "string" ||
     !/^[A-Za-z0-9._:-]{1,128}$/.test(request.requestId) ||
     typeof request.instrumentId !== "string" ||
-    !/^KRX:[0-9A-Z]{6,7}$/.test(request.instrumentId) ||
+    !/^(?:KRX:[0-9A-Z]{6,7}|(?:NASDAQ|NYSE|AMEX):[A-Z0-9.-]{1,20})$/.test(request.instrumentId) ||
     (request.side !== "BUY" && request.side !== "SELL") ||
     (request.orderType !== "MARKET" && request.orderType !== "LIMIT") ||
     typeof request.quantity !== "string" ||
     !/^[1-9]\d*$/.test(request.quantity) ||
     (request.limitPrice !== null &&
       (typeof request.limitPrice !== "string" ||
-        !/^[1-9]\d*$/.test(request.limitPrice))) ||
+        !/^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/.test(request.limitPrice) ||
+        request.limitPrice === "0")) ||
     (request.orderType === "LIMIT" && request.limitPrice === null) ||
     (request.orderType === "MARKET" && request.limitPrice !== null)
   ) {
@@ -899,10 +957,12 @@ export class DesktopRuntime {
   readonly #information: LocalInformationRepository;
   readonly #marketSnapshots: LocalMarketSnapshotRepository;
   readonly #instrumentMaster: KisDomesticInstrumentMaster;
+  readonly #usInstrumentMaster: KisUsInstrumentMaster;
   readonly #emitMarket: (projection: DesktopMarketProjection) => void;
   readonly #emitAccount: (projection: DesktopAccountProjection) => void;
   readonly #emitChart: (projection: DesktopChartProjection) => void;
   #symbol: string;
+  #usExchange: "NAS" | "NYS" | "AMS" | null = null;
   readonly #simulationProfile:
     | "INITIAL_CONSERVATIVE_V1"
     | "ADVANCED_QUEUE_V1";
@@ -923,11 +983,16 @@ export class DesktopRuntime {
   #informationCache:
     | { readonly projection: DesktopInformationFeedProjection; readonly at: number }
     | null = null;
+  #openDartLastFullSyncDate: string | null = null;
+  #openDartLastFullSyncAt = 0;
+  #openDartCorpCodes:
+    | { readonly date: string; readonly byCorpCode: ReadonlyMap<string, OpenDartCorpCode> }
+    | null = null;
   #marketContextRequest: Promise<DesktopMarketContextProjection> | null = null;
   #marketContextCache:
     | { readonly projection: DesktopMarketContextProjection; readonly at: number }
     | null = null;
-  #stream: DomesticKisLiveStream | null = null;
+  readonly #streams = new Set<DomesticKisLiveStream>();
   #marketConnectionGeneration = 0;
   #marketSequence = 0n;
   #lastProcessedTradeIdentity: string | null = null;
@@ -950,6 +1015,9 @@ export class DesktopRuntime {
     this.#information = new LocalInformationRepository(this.#database);
     this.#marketSnapshots = new LocalMarketSnapshotRepository(this.#database);
     this.#instrumentMaster = new KisDomesticInstrumentMaster({
+      userDataPath: options.userDataPath,
+    });
+    this.#usInstrumentMaster = new KisUsInstrumentMaster({
       userDataPath: options.userDataPath,
     });
     this.#emitMarket = options.emitMarket;
@@ -997,12 +1065,14 @@ export class DesktopRuntime {
         credentials,
         getAccessToken: () => auth.getAccessToken(),
       });
+      const after = <T>(delayMs: number, request: () => Promise<T>) =>
+        new Promise<void>((resolve) => setTimeout(resolve, delayMs)).then(request);
       const [stockResult, programResult, kospiResult, kosdaqResult, masterResult] =
         await Promise.allSettled([
           client.getInvestorByStock(symbol),
-          client.getProgramByStock(symbol),
-          client.getMarketInvestorTime("KOSPI"),
-          client.getMarketInvestorTime("KOSDAQ"),
+          after(80, () => client.getProgramByStock(symbol)),
+          after(160, () => client.getMarketInvestorTime("KOSPI")),
+          after(240, () => client.getMarketInvestorTime("KOSDAQ")),
           this.#instrumentMaster.search(symbol, 1),
         ]);
       const flowValue = (participant: "INDIVIDUAL" | "FOREIGN" | "INSTITUTION" | "PROGRAM", value: { sellQuantity: string; buyQuantity: string; netBuyQuantity: string; sellAmount: string; buyAmount: string; netBuyAmount: string }) => ({ participant, ...value });
@@ -1030,6 +1100,12 @@ export class DesktopRuntime {
         };
       };
       const markets = [marketProjection(kospiResult, "KOSPI"), marketProjection(kosdaqResult, "KOSDAQ")].filter((item): item is NonNullable<typeof item> => item !== null);
+      const missing = [
+        stock ? null : "종목 투자자",
+        program ? null : "프로그램",
+        markets.some((item) => item.market === "KOSPI") ? null : "KOSPI",
+        markets.some((item) => item.market === "KOSDAQ") ? null : "KOSDAQ",
+      ].filter((item): item is string => item !== null);
       const instrument = stock || program ? {
         instrumentId: `KRX:${symbol}`,
         symbol,
@@ -1047,20 +1123,53 @@ export class DesktopRuntime {
         instrument,
         markets,
         fetchedAt,
-        statusMessage: instrument || markets.length ? "KIS 투자자 수급 조회 완료" : "KIS 투자자 수급을 받지 못했습니다.",
+        statusMessage:
+          missing.length === 0
+            ? "KIS 투자자 수급 조회 완료"
+            : instrument || markets.length
+              ? `일부 수급 미수신: ${missing.join(", ")}`
+              : "KIS 투자자 수급을 받지 못했습니다.",
       };
     } catch (error) {
       return { ...unavailable(safeStatusMessage(error)), state: "ERROR", fetchedAt };
     }
   }
 
-  public async getDomesticRanking(
+  public async getRanking(
+    rawMarket: unknown,
     rawSort: unknown,
   ): Promise<DesktopRankingProjection> {
     const sort = validateRankingSort(rawSort);
+    const market = rawMarket === "US" ? "US" : "KRX";
     const config = loadRuntimeConfig();
     try {
       assertLiveReadOnlyAcknowledgement(config);
+      if (market === "US") {
+        const credentials = requireKisCredentialsForEnvironment(config, "prod");
+        const auth = this.#authClient("prod", credentials);
+        const client = new KisUsRankingClient({ credentials, getAccessToken: () => auth.getAccessToken() });
+        const pages = await Promise.all(["NAS", "NYS", "AMS"].map((exchange) => client.getRanking(exchange as "NAS" | "NYS" | "AMS", sort)));
+        const venue = { NAS: "NASDAQ", NYS: "NYSE", AMS: "AMEX" } as const;
+        const items = pages.flat().sort((left, right) => {
+          const field = sort === "TURNOVER" ? "cumulativeTurnover" : sort === "VOLUME_INCREASE" ? "volumeIncreaseRate" : sort === "AVERAGE_VOLUME" ? "cumulativeVolume" : "changeRate";
+          const leftValue = Number(left[field] ?? Number.NEGATIVE_INFINITY);
+          const rightValue = Number(right[field] ?? Number.NEGATIVE_INFINITY);
+          return sort === "CHANGE_RATE_LOSERS" ? leftValue - rightValue : rightValue - leftValue;
+        }).slice(0, 100);
+        return {
+          schemaVersion: 1, market: "US", sort, state: "READY", source: "KIS_REST",
+          fetchedAt: new Date().toISOString(),
+          statusMessage: `KIS 미국 NASDAQ·NYSE·AMEX ${items.length}개 종목 순위`,
+          items: items.map((item, index) => ({
+            rank: String(index + 1), instrumentId: `${venue[item.exchange]}:${item.symbol}`,
+            symbol: item.symbol, name: item.name, price: item.price, change: item.change,
+            changeRate: item.changeRate, cumulativeVolume: item.cumulativeVolume,
+            previousVolume: item.comparisonVolume, averageVolume: item.comparisonVolume,
+            volumeIncreaseRate: item.volumeIncreaseRate, volumeTurnoverRate: null,
+            averageTurnover: null, turnoverTurnoverRate: null, cumulativeTurnover: item.cumulativeTurnover,
+          })),
+        };
+      }
       if (
         sort === "CHANGE_RATE_GAINERS" ||
         sort === "CHANGE_RATE_LOSERS"
@@ -1076,11 +1185,13 @@ export class DesktopRuntime {
         }).getAllRanking(
           sort === "CHANGE_RATE_GAINERS"
             ? {
+                sortCode: "0",
                 minimumRate: "0.01",
                 maximumRate: "100",
                 maxPages: 10,
               }
             : {
+                sortCode: "1",
                 minimumRate: "-100",
                 maximumRate: "-0.01",
                 maxPages: 10,
@@ -1135,7 +1246,7 @@ export class DesktopRuntime {
       }
       return {
         schemaVersion: 1,
-        market: "KRX",
+        market,
         sort,
         state: "READY",
         source: ranking.source,
@@ -1157,7 +1268,7 @@ export class DesktopRuntime {
     } catch (error) {
       return {
         schemaVersion: 1,
-        market: "KRX",
+        market,
         sort,
         state: "ERROR",
         items: [],
@@ -1209,6 +1320,41 @@ export class DesktopRuntime {
         fetchedAt: null,
         statusMessage:
           "KIS 종목 마스터를 내려받지 못했습니다. 네트워크 연결을 확인해주세요.",
+      };
+    }
+  }
+
+  public async searchUsInstruments(
+    rawQuery: unknown,
+  ): Promise<DesktopInstrumentSearchProjection> {
+    if (typeof rawQuery !== "string" || !isSearchableUsInstrumentQuery(rawQuery)) {
+      throw new TypeError("Expected a US instrument search query");
+    }
+    const query = rawQuery.trim();
+    try {
+      const result = await this.#usInstrumentMaster.search(query, 20);
+      return {
+        schemaVersion: 1,
+        query,
+        state: "READY",
+        items: result.items,
+        source: result.source,
+        stale: result.stale,
+        fetchedAt: result.fetchedAt,
+        statusMessage: result.items.length === 0
+          ? `"${query}"에 일치하는 미국 종목이 없습니다.`
+          : `${result.items.length}개 미국 종목 · ${result.stale ? "마지막 KIS 해외 마스터" : "KIS 해외 마스터"}`,
+      };
+    } catch {
+      return {
+        schemaVersion: 1,
+        query,
+        state: "ERROR",
+        items: [],
+        source: "CACHED_KIS_MASTER",
+        stale: true,
+        fetchedAt: null,
+        statusMessage: "KIS 미국 종목 마스터를 내려받지 못했습니다.",
       };
     }
   }
@@ -1334,7 +1480,47 @@ export class DesktopRuntime {
   async #loadInformationFeed(): Promise<DesktopInformationFeedProjection> {
     const config = loadRuntimeConfig();
     const sources: DesktopInformationFeedProjection["sources"][number][] = [];
+    const transientItems: DesktopInformationItemProjection[] = [];
     const jobs: Promise<void>[] = [];
+
+    if (this.#usExchange !== null) {
+      try {
+        const client = new FinnhubNewsClient({ apiKey: requireFinnhubApiKey(config) });
+        jobs.push(
+          client.getCompanyNews(this.#market.symbol).then((news) => {
+            const obtainedAt = new Date().toISOString();
+            for (const item of news) {
+              transientItems.push({
+                id: stableLocalId("finnhub-news", [item.providerItemId]),
+                provider: "FINNHUB_NEWS",
+                kind: "NEWS",
+                titleOriginal: item.title,
+                titleKorean: null,
+                summaryKorean: item.summary,
+                sourceName: item.sourceName,
+                sourceLanguage: "en",
+                publishedAt: item.publishedAt,
+                publishedAtPrecision: "SECOND",
+                obtainedAt,
+                canonicalUrl: item.canonicalUrl,
+                rights: "PROVIDER_LINK_SUMMARY",
+                relatedInstrumentIds: [this.#market.instrumentId],
+              });
+            }
+            sources.push({
+              provider: "FINNHUB_NEWS",
+              state: "READY",
+              itemCount: news.length,
+              message: `Finnhub ${this.#market.symbol} 뉴스 ${news.length}건`,
+            });
+          }).catch(() => {
+            sources.push({ provider: "FINNHUB_NEWS", state: "ERROR", itemCount: 0, message: "Finnhub 뉴스 조회 실패" });
+          }),
+        );
+      } catch {
+        sources.push({ provider: "FINNHUB_NEWS", state: "UNCONFIGURED", itemCount: 0, message: "Finnhub 키 미설정" });
+      }
+    }
 
     try {
       assertLiveReadOnlyAcknowledgement(config);
@@ -1406,13 +1592,29 @@ export class DesktopRuntime {
           }),
       );
       jobs.push(
-        client
-          .getOverseasHeadlines({
+        Promise.all([
+          client.getOverseasHeadlines({
             nationCode: "US",
-            symbol: config.KIS_US_SYMBOL,
-          })
-          .then((page) => {
-            for (const headline of page.items) {
+            symbol: this.#usExchange === null ? config.KIS_US_SYMBOL : this.#symbol,
+          }),
+          client.getOverseasHeadlines({ nationCode: "US" }),
+        ])
+          .then((pages) => {
+            const selectedUsSymbol =
+              this.#usExchange === null ? config.KIS_US_SYMBOL : this.#symbol;
+            const fetchedAt = pages
+              .map((page) => page.fetchedAt)
+              .sort()
+              .at(-1) ?? new Date().toISOString();
+            const headlines = new Map(
+              pages
+                .flatMap((page) => page.items)
+                .map((headline) => [
+                  `${headline.providerDate}:${headline.providerTime}:${headline.providerKey}`,
+                  headline,
+                ]),
+            );
+            for (const headline of headlines.values()) {
               const publishedAt = kisHeadlineInstant(
                 headline.providerDate,
                 headline.providerTime,
@@ -1433,13 +1635,15 @@ export class DesktopRuntime {
                 sourceLanguage: containsHangul(headline.title) ? "ko" : "en",
                 publishedAt,
                 publishedAtPrecision: "SECOND",
-                obtainedAt: page.fetchedAt,
+                obtainedAt: fetchedAt,
                 rights: "KIS_HEADLINE_ONLY",
                 relatedInstrumentIds:
                   headline.symbol === null
                     ? []
+                    : headline.symbol === selectedUsSymbol && this.#usExchange !== null
+                      ? [this.#market.instrumentId]
                     : [
-                        `${headline.exchangeCode ?? config.KIS_US_EXCHANGE}:${headline.symbol}`,
+                        `${headline.exchangeCode === "NAS" ? "NASDAQ" : headline.exchangeCode === "NYS" ? "NYSE" : headline.exchangeCode === "AMS" ? "AMEX" : (headline.exchangeCode ?? "US")}:${headline.symbol}`,
                       ],
                 payloadHash: payloadHash(headline),
               });
@@ -1447,13 +1651,13 @@ export class DesktopRuntime {
             sources.push({
               provider: "KIS_OVERSEAS_NEWS",
               state: "READY",
-              itemCount: page.items.length,
-              message: `${page.items.length}개 실제 KIS 미국 뉴스 제목 수신`,
+              itemCount: headlines.size,
+              message: `${headlines.size}개 실제 KIS 미국 종목·시장 뉴스 제목 수신`,
             });
             this.#information.saveCheckpoint(
               "KIS_OVERSEAS_NEWS",
-              { fetchedAt: page.fetchedAt },
-              page.fetchedAt,
+              { fetchedAt },
+              fetchedAt,
             );
           })
           .catch(() => {
@@ -1491,7 +1695,7 @@ export class DesktopRuntime {
             const mappings = await client.listTickerMappings();
             const issuer = findSecIssuerMappings(
               mappings,
-              config.KIS_US_SYMBOL,
+              this.#usExchange === null ? config.KIS_US_SYMBOL : this.#symbol,
             )[0];
             if (issuer === undefined) {
               throw new Error("SEC_TICKER_MAPPING_NOT_FOUND");
@@ -1520,7 +1724,9 @@ export class DesktopRuntime {
                 rights: "PUBLIC_FILING",
                 relatedInstrumentIds: snapshot.tickers.map(
                   (ticker, index) =>
-                    `${snapshot.exchanges[index] ?? "US"}:${ticker}`,
+                    this.#usExchange !== null && ticker === this.#symbol
+                      ? this.#market.instrumentId
+                      : `${snapshot.exchanges[index] ?? "US"}:${ticker}`,
                 ),
                 payloadHash: hash,
               });
@@ -1579,14 +1785,44 @@ export class DesktopRuntime {
     try {
       const credentials = requireOpenDartCredentials(config);
       jobs.push(
-        new OpenDartClient({ credentials })
-          .listFilings({
-            beginDate: koreanCalendarDate(),
-            endDate: koreanCalendarDate(),
-          })
-          .then((page) => {
-            for (const filing of page.items) {
+        (async () => {
+          const client = new OpenDartClient({ credentials });
+          const providerDate = koreanCalendarDate();
+          const nowMs = Date.now();
+          const fullSync =
+            this.#openDartLastFullSyncDate !== providerDate ||
+            nowMs - this.#openDartLastFullSyncAt >= 15 * 60_000;
+          const page = fullSync
+            ? await client.listAllFilings({
+                beginDate: providerDate,
+                endDate: providerDate,
+              })
+            : await client.listFilings({
+                beginDate: providerDate,
+                endDate: providerDate,
+              });
+
+          if (this.#openDartCorpCodes?.date !== providerDate) {
+            try {
+              const corpCodes = await client.listCorpCodes();
+              this.#openDartCorpCodes = {
+                date: providerDate,
+                byCorpCode: new Map(
+                  corpCodes.map((corp) => [corp.corpCode, corp] as const),
+                ),
+              };
+            } catch {
+              // list.json의 stock_code를 우선 사용하며 기업코드 원장은 보조 매핑이다.
+            }
+          }
+
+          for (const filing of page.items) {
               const providerItemId = filing.providerFilingId;
+              const stockCode =
+                filing.stockCode ??
+                this.#openDartCorpCodes?.byCorpCode.get(filing.corpCode)
+                  ?.stockCode ??
+                null;
               this.#information.ingest({
                 id: stableLocalId("open-dart-filing", [providerItemId]),
                 provider: "OPEN_DART",
@@ -1603,29 +1839,38 @@ export class DesktopRuntime {
                 canonicalUrl: `https://dart.fss.or.kr/dsaf001/main.do?rcpNo=${providerItemId}`,
                 rights: "PUBLIC_FILING",
                 relatedInstrumentIds:
-                  filing.stockCode === null
-                    ? []
-                    : [`KRX:${filing.stockCode}`],
+                  stockCode === null ? [] : [`KRX:${stockCode}`],
                 payloadHash: payloadHash(filing),
               });
-            }
-            sources.push({
-              provider: "OPEN_DART",
-              state: "READY",
-              itemCount: page.items.length,
-              message: `오늘 OpenDART 공시 ${page.items.length}건 수신`,
-            });
-            this.#information.saveCheckpoint(
-              "OPEN_DART",
-              {
-                providerDate: koreanCalendarDate(),
-                page: page.page,
-                totalPages: page.totalPages,
-              },
-              page.obtainedAt,
-            );
-          })
-          .catch(() => {
+          }
+          if (fullSync) {
+            this.#openDartLastFullSyncDate = providerDate;
+            this.#openDartLastFullSyncAt = nowMs;
+          }
+          const pagesFetched = "pagesFetched" in page ? page.pagesFetched : 1;
+          const paginationComplete =
+            "paginationComplete" in page ? page.paginationComplete : false;
+          sources.push({
+            provider: "OPEN_DART",
+            state: "READY",
+            itemCount: page.items.length,
+            message: fullSync
+              ? `오늘 OpenDART 공시 ${page.items.length}건 전체 동기화`
+              : `오늘 OpenDART 최신 공시 ${page.items.length}건 확인`,
+          });
+          this.#information.saveCheckpoint(
+            "OPEN_DART",
+            {
+              providerDate,
+              pagesFetched,
+              totalPages: page.totalPages,
+              totalCount: page.totalCount,
+              paginationComplete,
+              fullReconciledAt: fullSync ? page.obtainedAt : undefined,
+            },
+            page.obtainedAt,
+          );
+        })().catch(() => {
             sources.push({
               provider: "OPEN_DART",
               state: "ERROR",
@@ -1644,7 +1889,16 @@ export class DesktopRuntime {
     }
     await Promise.all(jobs);
 
-    const items = this.#information.listRecent({ limit: 200 }).map((item) => ({
+    const usInformationMode = this.#usExchange !== null;
+    const visibleProviders = new Set(
+      usInformationMode
+        ? ["KIS_OVERSEAS_NEWS", "FINNHUB_NEWS", "SEC_EDGAR"]
+        : ["KIS_DOMESTIC_NEWS", "OPEN_DART"],
+    );
+    const storedItems: DesktopInformationItemProjection[] = this.#information.listRecent({ limit: 400 })
+      .filter((item) => visibleProviders.has(item.provider))
+      .slice(0, 200)
+      .map((item) => ({
       id: item.id,
       provider: item.provider,
       kind: item.kind,
@@ -1661,9 +1915,15 @@ export class DesktopRuntime {
       canonicalUrl: item.canonicalUrl,
       rights: item.rights,
       relatedInstrumentIds: item.relatedInstrumentIds,
-    }));
-    const readyCount = sources.filter((source) => source.state === "READY").length;
-    const errorCount = sources.filter((source) => source.state === "ERROR").length;
+      }));
+    const items = [...transientItems, ...storedItems]
+      .sort((left, right) => right.publishedAt.localeCompare(left.publishedAt))
+      .slice(0, 200);
+    const visibleSources = sources.filter((source) =>
+      visibleProviders.has(source.provider),
+    );
+    const readyCount = visibleSources.filter((source) => source.state === "READY").length;
+    const errorCount = visibleSources.filter((source) => source.state === "ERROR").length;
     const now = new Date().toISOString();
     const projection: DesktopInformationFeedProjection = {
       schemaVersion: 1,
@@ -1676,9 +1936,9 @@ export class DesktopRuntime {
             ? "PARTIAL"
             : "READY",
       items,
-      sources,
+      sources: visibleSources,
       fetchedAt: now,
-      statusMessage: `${readyCount}개 provider 연결 · 로컬 저장 ${items.length}건`,
+      statusMessage: `${usInformationMode ? "미국" : "국내"} ${readyCount}개 provider 연결 · 표시 ${items.length}건`,
     };
     this.#informationCache = { projection, at: Date.now() };
     return projection;
@@ -1710,7 +1970,8 @@ export class DesktopRuntime {
   ): Promise<DesktopChartProjection> {
     const requestKey = `${symbol}:${interval}:${range}`;
     const config = loadRuntimeConfig();
-    const dataEnvironment = readOnlyMarketDataEnvironment(config);
+    const usExchange = this.#usExchange;
+    const dataEnvironment = usExchange === null ? readOnlyMarketDataEnvironment(config) : "prod";
     let credentials;
     try {
       credentials = requireKisCredentialsForEnvironment(
@@ -1754,26 +2015,56 @@ export class DesktopRuntime {
       });
     }
 
-    this.#setChart({
-      schemaVersion: 1,
-      instrumentId: `KRX:${symbol}`,
-      interval,
-      range,
-      state: "LOADING",
-      candles: [],
-      source:
-        interval === "1m" || interval === "1d"
-          ? "KIS_REST"
-          : "KIS_REST_AGGREGATED",
-      turnoverQuality:
-        isIntraday ? "UNAVAILABLE" : "PROVIDER_REPORTED",
-      paginationComplete: false,
-      fetchedAt: null,
-      statusMessage: `KIS ${interval} 차트 조회 중`,
-    });
+    this.#setChart(
+      cached === undefined
+        ? {
+            schemaVersion: 1,
+            instrumentId: `${usExchange === "NAS" ? "NASDAQ" : usExchange === "NYS" ? "NYSE" : usExchange === "AMS" ? "AMEX" : "KRX"}:${symbol}`,
+            interval,
+            range,
+            state: "LOADING",
+            candles: [],
+            source:
+              interval === "1m" || interval === "1d"
+                ? "KIS_REST"
+                : "KIS_REST_AGGREGATED",
+            turnoverQuality:
+              isIntraday ? "UNAVAILABLE" : "PROVIDER_REPORTED",
+            paginationComplete: false,
+            fetchedAt: null,
+            statusMessage: `KIS ${interval} 차트 조회 중`,
+          }
+        : {
+            ...cached,
+            statusMessage: `${cached.statusMessage} · 캐시 표시 후 갱신 중`,
+          },
+    );
 
     try {
       const auth = this.#authClient(dataEnvironment, credentials);
+      if (usExchange !== null) {
+        if (!isIntraday) {
+          return this.#setChart({
+            ...initialChart(symbol), instrumentId: `${usExchange === "NAS" ? "NASDAQ" : usExchange === "NYS" ? "NYSE" : "AMEX"}:${symbol}`,
+            interval, range, state: "DISABLED", source: "KIS_REST",
+            statusMessage: "미국 장기 일봉은 다음 연결 대상입니다. 분봉 차트는 조회할 수 있습니다.",
+          });
+        }
+        const minutes = interval === "4h" ? 240 : Number(interval.slice(0, -1));
+        const history = await new KisUsChartClient({ credentials, getAccessToken: () => auth.getAccessToken() })
+          .getIntradayCandles({ exchange: usExchange, symbol, intervalMinutes: minutes });
+        const venue = usExchange === "NAS" ? "NASDAQ" : usExchange === "NYS" ? "NYSE" : "AMEX";
+        const ready: DesktopChartProjection = {
+          schemaVersion: 1, instrumentId: `${venue}:${symbol}`, interval, range, state: "READY",
+          candles: history.candles.map((candle) => ({ id: `${venue}:${symbol}:${interval}:${candle.openedAt}`, ...candle, forming: false })),
+          source: interval === "1m" ? "KIS_REST" : "KIS_REST_AGGREGATED",
+          turnoverQuality: history.candles.every((candle) => candle.turnover !== null) ? "PROVIDER_REPORTED" : "UNAVAILABLE",
+          paginationComplete: history.complete, fetchedAt: history.fetchedAt,
+          statusMessage: `KIS 미국 ${interval} 차트 · ${history.candles.length}개${history.complete ? "" : " · 최근 120개"}`,
+        };
+        this.#chartCache.set(requestKey, ready);
+        return this.#symbol === symbol ? this.#setChart(ready) : ready;
+      }
       const chart = new KisDomesticChartClient({
         environment: dataEnvironment,
         credentials,
@@ -1821,9 +2112,10 @@ export class DesktopRuntime {
       this.#chartCache.set(requestKey, ready);
       return this.#symbol === symbol ? this.#setChart(ready) : ready;
     } catch (error) {
+      const failedVenue = usExchange === "NAS" ? "NASDAQ" : usExchange === "NYS" ? "NYSE" : usExchange === "AMS" ? "AMEX" : "KRX";
       const failed: DesktopChartProjection = {
         schemaVersion: 1,
-        instrumentId: `KRX:${symbol}`,
+        instrumentId: `${failedVenue}:${symbol}`,
         interval,
         range,
         state: "ERROR",
@@ -1843,7 +2135,7 @@ export class DesktopRuntime {
   }
 
   public connectMarketReadOnly(): Promise<DesktopMarketProjection> {
-    if (this.#stream !== null) {
+    if (this.#streams.size > 0) {
       return Promise.resolve(this.#market);
     }
     if (this.#connectRequest === null) {
@@ -1865,26 +2157,73 @@ export class DesktopRuntime {
   public async selectInstrument(
     rawSymbol: unknown,
   ): Promise<DesktopMarketProjection> {
-    if (
-      typeof rawSymbol !== "string" ||
-      !/^[0-9A-Z]{6,7}$/.test(rawSymbol)
-    ) {
-      throw new Error("Unsupported domestic instrument symbol");
+    if (typeof rawSymbol !== "string") throw new Error("Unsupported instrument symbol");
+    const usMatch = /^(NAS|NYS|AMS):([A-Z0-9.-]{1,20})$/.exec(rawSymbol);
+    if (usMatch === null && !/^[0-9A-Z]{6,7}$/.test(rawSymbol)) {
+      throw new Error("Unsupported instrument symbol");
     }
+    const symbol = usMatch?.[2] ?? rawSymbol;
+    const usExchange = (usMatch?.[1] as "NAS" | "NYS" | "AMS" | undefined) ?? null;
     const selectionGeneration = this.#marketConnectionGeneration + 1;
     await this.disconnectMarket();
     if (this.#marketConnectionGeneration !== selectionGeneration) {
       return this.#market;
     }
-    this.#symbol = rawSymbol;
-    this.#chartCache.clear();
-    this.#chartRequests.clear();
+    this.#symbol = symbol;
+    this.#usExchange = usExchange;
+    this.#informationCache = null;
     this.#marketSequence = 0n;
     this.#lastProcessedTradeIdentity = null;
     this.#lastOrderBookSnapshotWriteAt = 0;
-    this.#setMarket(initialMarket(rawSymbol));
-    this.#setChart(initialChart(rawSymbol));
+    const usVenue = usExchange === "NAS" ? "NASDAQ" : usExchange === "NYS" ? "NYSE" : usExchange === "AMS" ? "AMEX" : null;
+    this.#setMarket(usVenue === null ? initialMarket(symbol) : initialUsMarket(symbol, usVenue));
+    this.#setChart(usVenue === null ? initialChart(symbol) : {
+      ...initialChart(symbol),
+      instrumentId: `${usVenue}:${symbol}`,
+      statusMessage: "미국 차트 REST 연결 전 · 실시간 호가/체결을 먼저 표시합니다.",
+    });
     return this.connectMarketReadOnly();
+  }
+
+  public async getWatchlistQuotes(
+    rawSymbols: unknown,
+  ): Promise<readonly import("../shared/desktop-contracts.js").DesktopWatchlistQuoteProjection[]> {
+    if (
+      !Array.isArray(rawSymbols) ||
+      rawSymbols.length > 50 ||
+      !rawSymbols.every(
+        (symbol) => typeof symbol === "string" && /^[0-9A-Z]{6,7}$/.test(symbol),
+      )
+    ) {
+      throw new Error("Unsupported watchlist symbols");
+    }
+    const symbols = [...new Set(rawSymbols as string[])];
+    const config = loadRuntimeConfig();
+    assertLiveReadOnlyAcknowledgement(config);
+    const environment = readOnlyMarketDataEnvironment(config);
+    const credentials = requireKisCredentialsForEnvironment(config, environment);
+    const auth = this.#authClient(environment, credentials);
+    const rest = new KisRestClient({
+      environment,
+      credentials,
+      getAccessToken: () => auth.getAccessToken(),
+    });
+    const quotes = [];
+    for (const symbol of symbols) {
+      try {
+        const quote = await rest.getDomesticCurrentPrice(symbol);
+        quotes.push({
+          instrumentId: quote.instrumentId,
+          price: quote.price,
+          changeRate: quote.changeRate,
+          cumulativeTurnover: quote.cumulativeTurnover,
+          receivedAt: quote.receivedAt,
+        });
+      } catch {
+        // One unavailable symbol must not prevent the remaining watchlist snapshots.
+      }
+    }
+    return quotes;
   }
 
   async #connectMarketReadOnly(
@@ -1895,7 +2234,8 @@ export class DesktopRuntime {
       this.#symbol === symbol &&
       this.#marketConnectionGeneration === generation;
     const config = loadRuntimeConfig();
-    const dataEnvironment = readOnlyMarketDataEnvironment(config);
+    const usExchange = this.#usExchange;
+    const dataEnvironment = usExchange === null ? readOnlyMarketDataEnvironment(config) : "prod";
     let credentials;
     try {
       credentials = requireKisCredentialsForEnvironment(
@@ -1932,6 +2272,59 @@ export class DesktopRuntime {
 
     try {
       const auth = this.#authClient(dataEnvironment, credentials);
+      if (usExchange !== null) {
+        const rest = new KisRestClient({
+          environment: "prod",
+          credentials,
+          getAccessToken: () => auth.getAccessToken(),
+        });
+        const [approvalKey, snapshot] = await Promise.all([
+          auth.getApprovalKey(),
+          rest.getOverseasQuoteAndOrderBook(usExchange, symbol),
+        ]);
+        if (!isCurrentConnection()) return this.#market;
+        const venue = usExchange === "NAS" ? "NASDAQ" : usExchange === "NYS" ? "NYSE" : "AMEX";
+        this.#marketSequence += 1n;
+        this.#setMarket({
+          ...this.#market,
+          mode: "KIS_READ_ONLY",
+          venue,
+          currency: "USD",
+          price: snapshot.price,
+          openPrice: snapshot.openPrice,
+          highPrice: snapshot.highPrice,
+          lowPrice: snapshot.lowPrice,
+          bids: snapshot.bids,
+          asks: snapshot.asks,
+          totalBidQuantity: snapshot.totalBidQuantity,
+          totalAskQuantity: snapshot.totalAskQuantity,
+          providerTime: snapshot.providerTime,
+          receivedAt: snapshot.receivedAt,
+          orderBookReceivedAt: snapshot.receivedAt,
+          freshness: "stale",
+          sequence: this.#marketSequence.toString(),
+          statusMessage: snapshot.bids.length > 0 || snapshot.asks.length > 0
+            ? "KIS 미국 REST 실제 1호가 · WebSocket 실시간 갱신 대기"
+            : "KIS 미국 현재가 수신 · 공급자 호가 잔량 미수신 · WebSocket 갱신 대기",
+        });
+        const stream = new DomesticKisLiveStream({
+          environment: "prod",
+          approvalKey,
+          symbol,
+          venue,
+          providerExchange: usExchange,
+          onProjection: (projection) => {
+            if (isCurrentConnection()) this.applyReadOnlyMarketProjection(projection);
+          },
+        });
+        this.#streams.add(stream);
+        await stream.start();
+        if (!isCurrentConnection()) {
+          this.#streams.delete(stream);
+          await stream.stop();
+        }
+        return this.#market;
+      }
       const rest = new KisRestClient({
         environment: dataEnvironment,
         credentials,
@@ -1962,22 +2355,43 @@ export class DesktopRuntime {
       const restoredOrderBook = hasRestOrderBook
         ? null
         : this.#marketSnapshots.getDomesticOrderBook(`KRX:${symbol}`);
-      const displayedBids = hasRestOrderBook
+      const restoredNxtTrade = this.#marketSnapshots.getDomesticTrade(
+        `KRX:${symbol}`,
+        "NXT",
+      );
+      const restoredNxtBook = this.#marketSnapshots.getDomesticOrderBook(
+        `KRX:${symbol}`,
+        "NXT",
+      );
+      const useTodayNxtClose =
+        restoredNxtTrade?.providerDate === koreanCalendarDate() &&
+        restoredNxtTrade.providerTime >= "154000" &&
+        restoredNxtBook !== null;
+      const displayedBids = useTodayNxtClose
+        ? restoredNxtBook.bids
+        : hasRestOrderBook
         ? orderBook.bids
         : (restoredOrderBook?.bids ?? []);
-      const displayedAsks = hasRestOrderBook
+      const displayedAsks = useTodayNxtClose
+        ? restoredNxtBook.asks
+        : hasRestOrderBook
         ? orderBook.asks
         : (restoredOrderBook?.asks ?? []);
-      const displayedProviderTime = hasRestOrderBook
+      const displayedProviderTime = useTodayNxtClose
+        ? restoredNxtBook.providerTime
+        : hasRestOrderBook
         ? orderBook.providerTime
         : (restoredOrderBook?.providerTime ?? null);
       this.#marketSequence += 1n;
       this.#setMarket({
         ...this.#market,
         mode: "KIS_READ_ONLY",
-        price: quote.price,
-        change: quote.change,
-        changeRate: quote.changeRate,
+        venue: useTodayNxtClose ? "NXT" : "KRX",
+        price: useTodayNxtClose ? restoredNxtTrade.price : quote.price,
+        change: useTodayNxtClose ? restoredNxtTrade.change : quote.change,
+        changeRate: useTodayNxtClose
+          ? restoredNxtTrade.changeRate
+          : quote.changeRate,
         executionStrength: null,
         cumulativeVolume: quote.cumulativeVolume,
         cumulativeTurnover: quote.cumulativeTurnover,
@@ -1986,14 +2400,20 @@ export class DesktopRuntime {
         lowPrice: quote.lowPrice,
         bids: displayedBids,
         asks: displayedAsks,
-        totalBidQuantity: hasRestOrderBook
+        totalBidQuantity: useTodayNxtClose
+          ? restoredNxtBook.totalBidQuantity
+          : hasRestOrderBook
           ? orderBook.totalBidQuantity
           : (restoredOrderBook?.totalBidQuantity ?? null),
-        totalAskQuantity: hasRestOrderBook
+        totalAskQuantity: useTodayNxtClose
+          ? restoredNxtBook.totalAskQuantity
+          : hasRestOrderBook
           ? orderBook.totalAskQuantity
           : (restoredOrderBook?.totalAskQuantity ?? null),
         providerTime: displayedProviderTime,
-        orderBookReceivedAt: hasRestOrderBook
+        orderBookReceivedAt: useTodayNxtClose
+          ? restoredNxtBook.providerReceivedAt
+          : hasRestOrderBook
           ? orderBook.receivedAt
           : (restoredOrderBook?.providerReceivedAt ?? null),
         orderBookOccurredAt: null,
@@ -2001,33 +2421,53 @@ export class DesktopRuntime {
         freshness: "stale",
         receivedAt: quote.receivedAt,
         sequence: this.#marketSequence.toString(),
-        statusMessage: hasRestOrderBook
+        statusMessage: useTodayNxtClose
+          ? `SQLite NXT 최종 체결 ${restoredNxtTrade.price}원 · 실시간 갱신 대기`
+          : hasRestOrderBook
           ? "KIS REST 실제 호가 10단계 · WebSocket 실시간 갱신 대기"
           : restoredOrderBook !== null
             ? `SQLite 최종 실제 호가 · ${restoredOrderBook.providerReceivedAt} · WebSocket 갱신 대기`
             : "KIS 현재가 수신 · 장외 빈 호가 · 저장된 최종 실제 호가 없음",
       });
 
-      const stream = new DomesticKisLiveStream({
-        environment: dataEnvironment,
-        approvalKey,
-        symbol,
-        onProjection: (projection) => {
-          if (isCurrentConnection()) {
-            this.applyReadOnlyMarketProjection(projection);
-          }
-        },
-      });
-      this.#stream = stream;
-      await stream.start();
+      const shouldProjectVenue = (projection: MarketLiveProjection): boolean => {
+        const venue = projection.orderBook?.venue ?? projection.trade?.venue;
+        const session = projection.trade?.session ?? "UNKNOWN";
+        return venue === "NXT"
+          ? session === "PRE" || session === "AFTER"
+          : session === "REGULAR" || session === "UNKNOWN";
+      };
+      const streams = (["KRX", "NXT"] as const).map(
+        (venue) =>
+          new DomesticKisLiveStream({
+            environment: dataEnvironment,
+            approvalKey,
+            symbol,
+            venue,
+            onProjection: (projection) => {
+              if (isCurrentConnection() && shouldProjectVenue(projection)) {
+                this.applyReadOnlyMarketProjection(projection);
+              }
+            },
+          }),
+      );
+      for (const stream of streams) this.#streams.add(stream);
+      const starts = await Promise.allSettled(
+        streams.map((stream) => stream.start()),
+      );
+      if (starts.every((result) => result.status === "rejected")) {
+        throw new Error("KIS_WS_ALL_DOMESTIC_VENUES_FAILED");
+      }
       if (!isCurrentConnection()) {
-        if (this.#stream === stream) this.#stream = null;
-        await stream.stop();
+        for (const stream of streams) this.#streams.delete(stream);
+        await Promise.all(streams.map((stream) => stream.stop()));
       }
       return this.#market;
     } catch (error) {
       if (!isCurrentConnection()) return this.#market;
-      this.#stream = null;
+      const streams = [...this.#streams];
+      this.#streams.clear();
+      await Promise.all(streams.map((stream) => stream.stop()));
       return this.#setMarket({
         ...this.#market,
         mode: "KIS_READ_ONLY",
@@ -2044,11 +2484,9 @@ export class DesktopRuntime {
   public async disconnectMarket(): Promise<DesktopMarketProjection> {
     this.#marketConnectionGeneration += 1;
     this.#connectRequest = null;
-    const stream = this.#stream;
-    this.#stream = null;
-    if (stream !== null) {
-      await stream.stop();
-    }
+    const streams = [...this.#streams];
+    this.#streams.clear();
+    await Promise.all(streams.map((stream) => stream.stop()));
     return this.#setMarket({
       ...this.#market,
       connectionState: "OFFLINE",
@@ -2079,13 +2517,15 @@ export class DesktopRuntime {
       clientOrderId: request.requestId,
       accountId: ACCOUNT_ID,
       instrumentId: request.instrumentId,
-      venue: "KRX",
-      currency: "KRW",
+      venue: this.#market.venue,
+      currency: this.#market.currency,
       side: request.side,
       orderType: request.orderType,
       quantity: request.quantity,
       limitPrice: request.limitPrice,
       timeInForce: "DAY",
+      // The v1 immutable paper-order ledger stores REGULAR as its canonical
+      // equity session; executable phase eligibility is checked above.
       session: "REGULAR",
       submittedAt: now,
       submissionMode: "CONFIRM_TICKET",
@@ -2101,7 +2541,7 @@ export class DesktopRuntime {
         lastTradeSequence: null,
         cursorScope: null,
       },
-      policy: desktopPaperPolicy(),
+      policy: desktopPaperPolicy(order.venue),
       evaluatedAt: now,
     });
     if (execution.status === "REJECTED") {
@@ -2216,17 +2656,36 @@ export class DesktopRuntime {
         : {}),
     };
     const liveBook = projection.orderBook;
+    const liveTrade = projection.trade;
+    if (
+      liveTrade !== null &&
+      liveTrade.providerTime !== null &&
+      projection.lastTradeReceivedAt !== null &&
+      (liveTrade.venue === "KRX" || liveTrade.venue === "NXT")
+    ) {
+      this.#marketSnapshots.saveDomesticTrade({
+        instrumentId: `KRX:${this.#symbol}`,
+        venue: liveTrade.venue,
+        price: liveTrade.price,
+        change: liveTrade.change,
+        changeRate: liveTrade.changeRate,
+        providerDate: liveTrade.providerDate,
+        providerTime: liveTrade.providerTime,
+        providerReceivedAt: projection.lastTradeReceivedAt,
+      });
+    }
     if (
       liveBook !== null &&
       liveBook.providerTime !== null &&
       liveBook.providerTime !== "000000" &&
       projection.lastOrderBookReceivedAt !== null &&
+      (liveBook.venue === "KRX" || liveBook.venue === "NXT") &&
       liveBook.bids.length + liveBook.asks.length > 0 &&
       Date.now() - this.#lastOrderBookSnapshotWriteAt >= 1_000
     ) {
       this.#marketSnapshots.saveDomesticOrderBook({
         instrumentId: liveBook.instrumentId,
-        venue: "KRX",
+        venue: liveBook.venue === "NXT" ? "NXT" : "KRX",
         bids: [...liveBook.bids],
         asks: [...liveBook.asks],
         totalBidQuantity: liveBook.totalBidQuantity,
@@ -2252,25 +2711,41 @@ export class DesktopRuntime {
     const existing = this.#database
       .prepare("SELECT id FROM simulation_accounts WHERE id = ?")
       .get(ACCOUNT_ID);
-    if (existing !== undefined) return;
     const now = new Date().toISOString();
-    this.#accounts.createAccount({
-      id: ACCOUNT_ID,
-      displayName: "나의 로컬 모의 계좌",
-      baseCurrency: "KRW",
-      initialCashMinor: DEFAULT_INITIAL_CASH_MINOR,
-      initialLedgerEntryId: "personal-paper-initial-funding",
-      idempotencyKey: "personal-paper-initial-funding",
-      occurredAt: now,
-    });
+    if (existing === undefined) {
+      this.#accounts.createAccount({
+        id: ACCOUNT_ID,
+        displayName: "나의 로컬 모의 계좌",
+        baseCurrency: "KRW",
+        initialCashMinor: DEFAULT_INITIAL_CASH_MINOR,
+        initialLedgerEntryId: "personal-paper-initial-funding",
+        idempotencyKey: "personal-paper-initial-funding",
+        occurredAt: now,
+      });
+    }
+    const usdFunding = this.#database
+      .prepare("SELECT id FROM cash_ledger WHERE account_id = ? AND id = ?")
+      .get(ACCOUNT_ID, "personal-paper-usd-initial-funding");
+    if (usdFunding === undefined) {
+      this.#accounts.appendCashLedgerEntry({
+        id: "personal-paper-usd-initial-funding",
+        accountId: ACCOUNT_ID,
+        currency: "USD",
+        amountMinor: DEFAULT_INITIAL_USD_CASH_MINOR,
+        entryType: "INITIAL_FUNDING",
+        idempotencyKey: "personal-paper-usd-initial-funding",
+        occurredAt: now,
+      });
+    }
   }
 
   #accountProjection(): DesktopAccountProjection {
     const summary: PaperAccountSummary =
       this.#papers.getAccountSummary(ACCOUNT_ID);
+    const activeCurrency = this.#market.currency;
     const cash =
       summary.cashBalances.find(
-        (balance) => balance.currency === summary.baseCurrency,
+        (balance) => balance.currency === activeCurrency,
       )?.availableMinor ?? "0";
     const fills = this.#papers.listPaperFillMarkers(
       ACCOUNT_ID,
@@ -2286,7 +2761,7 @@ export class DesktopRuntime {
       schemaVersion: 1,
       accountId: summary.accountId,
       displayName: summary.displayName,
-      baseCurrency: summary.baseCurrency,
+      baseCurrency: activeCurrency,
       cashMinor: cash,
       storageState: "READY",
       simulationProfile: this.#simulationProfile,
@@ -2377,6 +2852,7 @@ export class DesktopRuntime {
       .filter(
         (stored) =>
           stored.instrumentId === tick.instrumentId &&
+          stored.venue === tick.venue &&
           stored.orderType === "LIMIT" &&
           ["ACCEPTED", "RESTING", "PARTIALLY_FILLED"].includes(stored.status),
       );
@@ -2401,7 +2877,7 @@ export class DesktopRuntime {
       kind: "TRADE_TICK",
       marketEventId,
       sequence: tick.cumulativeVolume,
-      currency: "KRW",
+      currency: this.#market.currency,
       freshness: "LIVE",
       receivedAt: tradeReceivedAt,
       tradingPhase: "REGULAR_CONTINUOUS",
@@ -2461,7 +2937,7 @@ export class DesktopRuntime {
           lastTradeSequence: null,
           cursorScope: null,
         },
-        policy: desktopPaperPolicy(),
+        policy: desktopPaperPolicy(stored.venue),
         evaluatedAt: tradeReceivedAt,
       });
       if (
@@ -2529,7 +3005,7 @@ export class DesktopRuntime {
           submittedAt: market.snapshot.occurredAt,
         },
         market,
-        policy: desktopPaperPolicy(),
+        policy: desktopPaperPolicy(openOrder.order.venue),
         safetyFactor: this.#queueSafetyFactor,
         evaluatedAt,
       });
@@ -2604,7 +3080,7 @@ export class DesktopRuntime {
         queue,
         trade: allocatedTrade,
         book,
-        policy: desktopPaperPolicy(),
+        policy: desktopPaperPolicy(stored.venue),
         evaluatedAt: input.tradeReceivedAt,
       });
       if (decision.resetRequired) {
@@ -2758,17 +3234,19 @@ export class DesktopRuntime {
       kind: "ORDER_BOOK",
       marketEventId: `desktop-book:${this.#market.sequence}`,
       sequence: this.#market.sequence,
-      currency: "KRW",
+      currency: this.#market.currency,
       freshness: "LIVE",
       receivedAt: this.#market.orderBookReceivedAt ?? receivedAt,
       tradingPhase:
-        this.#market.session === "REGULAR"
+        this.#market.session === "REGULAR" ||
+        ((this.#market.venue === "NXT" || ["NASDAQ", "NYSE", "AMEX"].includes(this.#market.venue)) &&
+          (this.#market.session === "PRE" || this.#market.session === "AFTER"))
           ? "REGULAR_CONTINUOUS"
           : "CLOSED",
-      sessionKey: `KRX:${providerDate}:REGULAR`,
+      sessionKey: `${this.#market.venue}:${providerDate}:${this.#market.session}`,
       snapshot: {
         instrumentId: this.#market.instrumentId,
-        venue: "KRX",
+        venue: this.#market.venue,
         bids: [...this.#market.bids],
         asks: [...this.#market.asks],
         totalBidQuantity: this.#market.totalBidQuantity,
@@ -2791,7 +3269,7 @@ export class DesktopRuntime {
     ) {
       return "0";
     }
-    const limit = BigInt(order.limitPrice ?? "0");
+    const limit = currencyDecimalToMinor(order.limitPrice ?? "0", order.currency);
     const remaining = BigInt(execution.remainingQuantity);
     const gross = limit * remaining;
     return (gross + ceilRate(gross, FEE_RATE_PPM)).toString();
@@ -2805,17 +3283,17 @@ export class DesktopRuntime {
   ): CashLedgerEntryInput[] {
     if (execution.fills.length === 0) return [];
     const gross = execution.fills.reduce(
-      (sum, fill) => sum + krwDecimalToMinor(fill.grossNotional),
+      (sum, fill) => sum + currencyDecimalToMinor(fill.grossNotional, order.currency),
       0n,
     );
     const fee = ceilRate(gross, FEE_RATE_PPM);
-    const tax = order.side === "SELL" ? ceilRate(gross, SELL_TAX_RATE_PPM) : 0n;
+    const tax = order.currency === "KRW" && order.side === "SELL" ? ceilRate(gross, SELL_TAX_RATE_PPM) : 0n;
     const base = commitId;
     const entries: CashLedgerEntryInput[] = [
       {
         id: `${base}:principal`,
         accountId: order.accountId,
-        currency: "KRW",
+        currency: order.currency,
         amountMinor: (order.side === "BUY" ? -gross : gross).toString(),
         entryType: "TRADE_PRINCIPAL",
         idempotencyKey: `${base}:principal`,
@@ -2827,7 +3305,7 @@ export class DesktopRuntime {
       entries.push({
         id: `${base}:fee`,
         accountId: order.accountId,
-        currency: "KRW",
+        currency: order.currency,
         amountMinor: (-fee).toString(),
         entryType: "FEE",
         idempotencyKey: `${base}:fee`,
@@ -2839,7 +3317,7 @@ export class DesktopRuntime {
       entries.push({
         id: `${base}:tax`,
         accountId: order.accountId,
-        currency: "KRW",
+        currency: order.currency,
         amountMinor: (-tax).toString(),
         entryType: "TAX",
         idempotencyKey: `${base}:tax`,
@@ -2851,8 +3329,12 @@ export class DesktopRuntime {
   }
 
   #setMarket(projection: DesktopMarketProjection): DesktopMarketProjection {
+    const currencyChanged = this.#market.currency !== projection.currency;
     this.#market = projection;
     this.#emitMarket(projection);
+    if (currencyChanged) {
+      this.#emitAccount(this.#accountProjection());
+    }
     return projection;
   }
 

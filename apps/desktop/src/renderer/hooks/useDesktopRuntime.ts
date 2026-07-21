@@ -35,13 +35,17 @@ export interface DesktopRuntimeState {
   readonly submitPaperOrder: (
     request: DesktopPaperOrderRequest,
   ) => Promise<DesktopPaperOrderResult | null>;
-  readonly loadDomesticRanking: (
+  readonly loadRanking: (
+    market: "KRX" | "US",
     sort: DesktopRankingSort,
   ) => Promise<DesktopRankingProjection | null>;
   readonly selectInstrument: (
     symbol: string,
   ) => Promise<DesktopMarketProjection | null>;
   readonly searchDomesticInstruments: (
+    query: string,
+  ) => Promise<DesktopInstrumentSearchProjection | null>;
+  readonly searchUsInstruments: (
     query: string,
   ) => Promise<DesktopInstrumentSearchProjection | null>;
   readonly loadInformationFeed: (
@@ -297,8 +301,9 @@ export function useDesktopRuntime(): DesktopRuntimeState {
     [],
   );
 
-  const loadDomesticRanking = useCallback(
+  const loadRanking = useCallback(
     async (
+      market: "KRX" | "US",
       sort: DesktopRankingSort,
     ): Promise<DesktopRankingProjection | null> => {
       const api = window.paperTradingDesktop;
@@ -306,7 +311,7 @@ export function useDesktopRuntime(): DesktopRuntimeState {
       const requestSequence = ++rankingRequestSequence.current;
       setRanking({
         schemaVersion: 1,
-        market: "KRX",
+        market,
         sort,
         state: "LOADING",
         items: [],
@@ -315,7 +320,7 @@ export function useDesktopRuntime(): DesktopRuntimeState {
         statusMessage: "KIS 읽기 전용 거래 순위를 불러오는 중입니다.",
       });
       try {
-        const projection = await api.rankings.getDomestic(sort);
+        const projection = await api.rankings.get(market, sort);
         if (
           !isCurrentDesktopRankingResponse({
             requestSequence,
@@ -335,7 +340,7 @@ export function useDesktopRuntime(): DesktopRuntimeState {
         if (requestSequence !== rankingRequestSequence.current) {
           return null;
         }
-        setError("KIS 국내 거래 순위를 불러오지 못했습니다.");
+        setError(`KIS ${market === "US" ? "미국" : "국내"} 거래 순위를 불러오지 못했습니다.`);
         return null;
       }
     },
@@ -376,7 +381,10 @@ export function useDesktopRuntime(): DesktopRuntimeState {
       const api = window.paperTradingDesktop;
       if (!api) return null;
       const requestSequence = ++instrumentSelectionSequence.current;
-      const expectedInstrumentId = `KRX:${symbol}`;
+      const usSelection = /^(NAS|NYS|AMS):(.+)$/.exec(symbol);
+      const expectedInstrumentId = usSelection === null
+        ? `KRX:${symbol}`
+        : `${usSelection[1] === "NAS" ? "NASDAQ" : usSelection[1] === "NYS" ? "NYSE" : "AMEX"}:${usSelection[2]}`;
       activeInstrumentId.current = expectedInstrumentId;
       investorFlowRequestSequence.current += 1;
       setInvestorFlow(null);
@@ -444,6 +452,34 @@ export function useDesktopRuntime(): DesktopRuntimeState {
     [],
   );
 
+  const searchUsInstruments = useCallback(
+    async (query: string): Promise<DesktopInstrumentSearchProjection | null> => {
+      const api = window.paperTradingDesktop;
+      const normalizedQuery = query.trim();
+      const requestSequence = ++instrumentSearchSequence.current;
+      if (!api || normalizedQuery.length === 0) {
+        setInstrumentSearch(null);
+        return null;
+      }
+      try {
+        const projection = await api.instruments.searchUs(normalizedQuery);
+        if (requestSequence !== instrumentSearchSequence.current || projection.query !== normalizedQuery) return null;
+        setInstrumentSearch(projection);
+        return projection;
+      } catch {
+        if (requestSequence === instrumentSearchSequence.current) {
+          setInstrumentSearch({
+            schemaVersion: 1, query: normalizedQuery, state: "ERROR", items: [],
+            source: "CACHED_KIS_MASTER", stale: true, fetchedAt: null,
+            statusMessage: "미국 종목 검색 데이터를 불러오지 못했습니다.",
+          });
+        }
+        return null;
+      }
+    },
+    [],
+  );
+
   return {
     market,
     account,
@@ -456,9 +492,10 @@ export function useDesktopRuntime(): DesktopRuntimeState {
     investorFlow,
     instrumentSearch,
     loadChartHistory,
-    loadDomesticRanking,
+    loadRanking,
     selectInstrument,
     searchDomesticInstruments,
+    searchUsInstruments,
     loadInformationFeed,
     loadMarketContext,
     loadInvestorFlow,

@@ -3,10 +3,53 @@ export type DomesticSecurityType = "STOCK" | "ETF" | "ETN" | "OTHER";
 
 export interface ReferencePriceLevel {
   readonly price: string;
-  readonly quantity: "—";
+  readonly quantity: string;
   readonly changeRate: string;
   readonly direction: "positive" | "negative" | "flat";
   readonly depthBand: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
+  readonly referenceOnly?: boolean;
+}
+
+function usdCents(value: string): bigint | null {
+  const match = /^(\d+)(?:\.(\d{1,4}))?$/.exec(value.trim());
+  if (!match) return null;
+  const fraction = (match[2] ?? "").padEnd(4, "0").slice(0, 4);
+  const tenThousandths = BigInt(match[1] ?? "0") * 10_000n + BigInt(fraction || "0");
+  // US NMS stocks at or above $1 normally quote in $0.01 increments.
+  return (tenThousandths + 99n) / 100n;
+}
+
+function formatUsdCents(value: bigint): string {
+  return `${value / 100n}.${String(value % 100n).padStart(2, "0")}`;
+}
+
+export function buildUsOneLevelPriceLadder(options: {
+  readonly bestAskPrice: string | null;
+  readonly bestAskQuantity: string | null;
+  readonly bestBidPrice: string | null;
+  readonly bestBidQuantity: string | null;
+  readonly previousClosePrice: string | null;
+}): { readonly asks: readonly ReferencePriceLevel[]; readonly bids: readonly ReferencePriceLevel[] } {
+  const ask = options.bestAskPrice === null ? null : usdCents(options.bestAskPrice);
+  const bid = options.bestBidPrice === null ? null : usdCents(options.bestBidPrice);
+  const previousClose = Number(options.previousClosePrice);
+  const close = Number.isFinite(previousClose) && previousClose > 0 ? previousClose : null;
+  if (ask === null || bid === null || ask <= 0n || bid <= 0n) return { asks: [], bids: [] };
+  const asks = Array.from({ length: 10 }, (_, index) => {
+    const cents = ask + BigInt(index);
+    const price = formatUsdCents(cents);
+    return { price, quantity: index === 0 ? (options.bestAskQuantity ?? "—") : "—",
+      changeRate: changeRateFor(Number(price), close), direction: directionFor(Number(price), close),
+      depthBand: (index + 1) as ReferencePriceLevel["depthBand"], referenceOnly: index !== 0 };
+  }).reverse();
+  const bids = Array.from({ length: 10 }, (_, index) => {
+    const cents = bid - BigInt(index);
+    const price = formatUsdCents(cents > 0n ? cents : 1n);
+    return { price, quantity: index === 0 ? (options.bestBidQuantity ?? "—") : "—",
+      changeRate: changeRateFor(Number(price), close), direction: directionFor(Number(price), close),
+      depthBand: (index + 1) as ReferencePriceLevel["depthBand"], referenceOnly: index !== 0 };
+  });
+  return { asks, bids };
 }
 
 function stockTickSize(price: number, market: DomesticEquityMarket): number {

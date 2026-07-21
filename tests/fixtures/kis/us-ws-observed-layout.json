@@ -1,0 +1,1 @@
+{"observedAt":"2026-07-21","environment":"KIS_PROD_PUBLIC_MARKET_DATA","containsCredentials":false,"layouts":{"HDFSASP0":{"officialPrefixFields":16,"observedFields":71},"HDFSCNT0":{"officialPrefixFields":25,"observedFields":26}},"note":"Values intentionally omitted; canonical tests use anonymized synthetic public-market values and opaque suffixes."}

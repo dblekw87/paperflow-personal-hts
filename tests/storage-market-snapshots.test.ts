@@ -62,4 +62,43 @@ describe("local real order-book snapshots", () => {
       opened.database.close();
     }
   });
+
+  it("keeps NXT closing book and trade separate from KRX", () => {
+    const opened = openPaperTradingDatabase({ filename: ":memory:" });
+    try {
+      const snapshots = new LocalMarketSnapshotRepository(
+        opened.database,
+        () => CAPTURED_AT,
+      );
+      snapshots.saveDomesticOrderBook({
+        instrumentId: "KRX:005930",
+        venue: "NXT",
+        bids: [{ price: "263500", quantity: "12" }],
+        asks: [{ price: "264000", quantity: "8" }],
+        totalBidQuantity: "12",
+        totalAskQuantity: "8",
+        providerTime: "195959",
+        providerReceivedAt: RECEIVED_AT,
+      });
+      snapshots.saveDomesticTrade({
+        instrumentId: "KRX:005930",
+        venue: "NXT",
+        price: "263500",
+        change: "4500",
+        changeRate: "1.74",
+        providerDate: "20260720",
+        providerTime: "195959",
+        providerReceivedAt: RECEIVED_AT,
+      });
+      expect(snapshots.getDomesticOrderBook("KRX:005930", "NXT")?.venue).toBe(
+        "NXT",
+      );
+      expect(snapshots.getDomesticTrade("KRX:005930", "NXT")?.price).toBe(
+        "263500",
+      );
+      expect(snapshots.getDomesticOrderBook("KRX:005930", "KRX")).toBeNull();
+    } finally {
+      opened.database.close();
+    }
+  });
 });
