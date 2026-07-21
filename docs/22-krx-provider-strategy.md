@@ -9,7 +9,7 @@ PaperFlow는 국내 시장 데이터 공급원을 다음처럼 분리한다.
 | 실시간 체결·호가 | KIS WebSocket | 없음 | 개인 계정으로 즉시 화면 반응성이 필요하고 KRX 실시간 feed는 별도 분배 계약 영역이다. |
 | 차트 intraday/history | KIS REST | 없음 | 현재 제품의 chart readiness gate와 KIS fixture/contract test가 이미 구축되어 있다. |
 | 일별 종목 매매정보·종목기본정보 | KRX OpenAPI | KIS master/ranking | KRX OpenAPI 공개 서비스 목록에 유가증권·코스닥 일별매매정보와 종목기본정보가 있다. |
-| 투자자 수급 | KRX Data Marketplace/data product | KIS REST | 거래소 원천이 더 적합하지만, 현재 공개 OpenAPI 목록에서는 수급 전용 endpoint가 확인되지 않았다. |
+| 투자자 수급 | KRX Data Marketplace 통계 CSV | KIS REST | KRX OpenAPI 목록에는 없지만 정보데이터시스템 `[12009] 투자자별 거래실적(개별종목)`의 `MDCSTAT02301` CSV 다운로드 payload가 확인됐다. |
 | 공매도 | KRX Data Marketplace/data product | unsupported | 공매도는 거래소 원천이 맞다. 확인된 OpenAPI endpoint 또는 별도 data product 계약 전에는 숫자를 만들지 않는다. |
 | IPO·상장 일정 | KIND official web/Excel | KRX OpenAPI when confirmed | KIND 공식 endpoint가 실제 동작 확인됐다. |
 | 권리일정 | 공공데이터포털/KSD | provider error state | 예탁원 API 401은 키 승인/전파 또는 serviceKey 적용 문제로 분리해 표시한다. |
@@ -21,8 +21,15 @@ PaperFlow는 국내 시장 데이터 공급원을 다음처럼 분리한다.
 서비스 이용방법은 로그인, 인증키 신청, API 서비스 목록/명세서 확인, 서비스 활용신청,
 승인 후 사용 순서다. 요청 인증키는 HTTP header `AUTH_KEY`로 전달한다.
 
-현재 공개 페이지에서 `종목별 투자자별 수급` 또는 `공매도` OpenAPI endpoint는 확인하지
-못했다. 따라서 이 저장소는 해당 endpoint를 추측해 호출하지 않는다.
+현재 공개 OpenAPI 페이지에서 `종목별 투자자별 수급` 또는 `공매도` endpoint는 확인하지
+못했다. 따라서 이 저장소는 OpenAPI endpoint를 추측해 호출하지 않는다.
+
+대신 KRX 정보데이터시스템 통계 화면에서 확인된 다운로드 원천은 별도
+`KRX_DATA_PRODUCT` source로 분리한다. `[12009] 투자자별 거래실적(개별종목)`은
+`/comm/fileDn/GenerateOTP/generate.cmd`에 `url=dbms/MDC/STAT/standard/MDCSTAT02301`을
+포함한 form payload를 보내 OTP를 받고, `/comm/fileDn/download_csv/download.cmd`에
+`code`를 POST해 CSV를 수신한다. 화면 단위가 `천주/백만원`이면 projection에는 주/원
+단위로 정규화한다.
 
 ## 3. Runtime Policy
 
@@ -40,10 +47,10 @@ PaperFlow는 국내 시장 데이터 공급원을 다음처럼 분리한다.
 2. 완료: KRX 일별매매정보 adapter: KOSPI `sto/stk_bydd_trd`, KOSDAQ `sto/ksq_bydd_trd`.
 3. KRX 종목기본정보 adapter: KOSPI/KOSDAQ basic info를 KIS master fallback과 비교.
 4. UI 완료: 공매도 카드 shell. 실제 KRX 공매도 거래·잔고 endpoint 확인 전에는 `미제공`과 미연결 사유만 표시한다.
-5. UI 완료: 투자자 수급 source badge. KRX source가 연결되면 `KRX_OPENAPI` 또는 `KRX_DATA_PRODUCT`, 현재 fallback은 `KIS_REST`로 표시한다.
-6. 수급 provider spike: 계정 내 명세서에서 수급 전용 API ID 또는 data product endpoint 확인.
+5. 완료: 투자자 수급 source badge. KRX source가 연결되면 `KRX_OPENAPI` 또는 `KRX_DATA_PRODUCT`, fallback은 `KIS_REST`로 표시한다.
+6. 부분 완료: KRX 통계 CSV 종목별 수급 adapter. `[12009]` `MDCSTAT02301`을 `KRX_DATA_PRODUCT`로 연결하고, 개인/외국인/기관합계 필수 row 누락 시 KIS fallback한다.
 7. 공매도 provider spike: 계정 내 명세서에서 공매도 거래/잔고 endpoint 확인.
-8. 실제 provider 확인 후 투자자 수급 값을 KRX로 전환하고 KIS 수급 adapter는 fallback로 격하.
+8. 후속: `[12008] 투자자별 거래실적` 전체 시장 수급과 프로그램매매 CSV payload를 확인해 KRX 통계 다운로드 client에 추가한다.
 
 2026-07-22 현재 Electron 국내 순위는 `TURNOVER`, `AVERAGE_VOLUME`,
 `CHANGE_RATE_GAINERS`, `CHANGE_RATE_LOSERS`에서 KRX OpenAPI 일별매매정보를 먼저
@@ -57,3 +64,6 @@ KIS fallback을 유지한다.
   `유가증권 종목기본정보`, `코스닥 종목기본정보` 등을 표시한다.
 - KRX OpenAPI 이용방법은 인증키 신청, 명세서 확인, 활용신청, 승인 후 사용 순서다.
 - KRX service detail page는 인증키를 request header `AUTH_KEY` 필드로 전달한다고 안내한다.
+- KRX 정보데이터시스템 `[12009] 투자자별 거래실적(개별종목)` Network payload에서
+  `MDCSTAT02301`, `isuCd=KR7005930003`, `share=1`, `money=1`, `download_csv/download.cmd`
+  code POST 패턴을 확인했다.

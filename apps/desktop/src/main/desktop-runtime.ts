@@ -77,6 +77,7 @@ import { KisRestClient } from "../../../../src/kis/rest-client.js";
 import { KisDomesticInvestorFlowClient } from "../../../../src/kis/domestic-investor-flow.js";
 import { KrxOpenApiClient } from "../../../../src/krx/openapi-client.js";
 import { KrxDailyStockTradeClient } from "../../../../src/krx/daily-stock-trade.js";
+import { KrxInvestorFlowClient } from "../../../../src/krx/investor-flow.js";
 import { DomesticKisLiveStream } from "../../../../src/kis/ws/live-stream.js";
 import { domesticSessionFromProviderTime } from "../../../../src/kis/ws/normalize.js";
 import type { MarketLiveProjection } from "../../../../src/contracts/market-live-projection.js";
@@ -484,6 +485,21 @@ function previousKoreanBusinessDate(now = new Date()): string {
   do {
     cursor.setUTCDate(cursor.getUTCDate() - 1);
   } while (cursor.getUTCDay() === 0 || cursor.getUTCDay() === 6);
+  return cursor.toISOString().slice(0, 10).replaceAll("-", "");
+}
+
+function koreanDateOffset(providerDate: string, days: number): string {
+  if (!/^\d{8}$/.test(providerDate)) {
+    throw new TypeError("Expected YYYYMMDD provider date");
+  }
+  const cursor = new Date(
+    Date.UTC(
+      Number(providerDate.slice(0, 4)),
+      Number(providerDate.slice(4, 6)) - 1,
+      Number(providerDate.slice(6, 8)),
+    ),
+  );
+  cursor.setUTCDate(cursor.getUTCDate() + days);
   return cursor.toISOString().slice(0, 10).replaceAll("-", "");
 }
 
@@ -1340,9 +1356,7 @@ export class DesktopRuntime {
     const fetchedAt = new Date().toISOString();
     const symbol = this.#symbol;
     const config = loadRuntimeConfig();
-    const krxProviderNote = hasKrxOpenApiCredentials(config)
-      ? "KRX OpenAPI 키는 구성됐지만 공개 서비스 목록에서 수급·공매도 전용 endpoint가 아직 확인되지 않아 KIS 읽기 전용으로 fallback합니다."
-      : "KRX 수급·공매도 provider 키가 없어 KIS 읽기 전용으로 fallback합니다.";
+    const krxProviderNote = "KRX 통계 CSV 수급을 우선하고 실패하면 KIS 읽기 전용으로 fallback합니다.";
     const unavailable = (message: string): DesktopInvestorFlowProjection => ({
       schemaVersion: 1,
       state: "UNAVAILABLE",
@@ -1352,12 +1366,75 @@ export class DesktopRuntime {
       fetchedAt: null,
       statusMessage: message,
     });
+    const flowValue = (participant: "INDIVIDUAL" | "FOREIGN" | "INSTITUTION" | "PROGRAM", value: { sellQuantity: string; buyQuantity: string; netBuyQuantity: string; sellAmount: string; buyAmount: string; netBuyAmount: string }) => ({ participant, ...value });
+    const calendarDate = (value: string): string =>
+      /^\d{8}$/.test(value)
+        ? `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`
+        : value;
+    const providerClockTime = (value: string): string =>
+      /^\d{6}$/.test(value)
+        ? `${value.slice(0, 2)}:${value.slice(2, 4)}:${value.slice(4, 6)}`
+        : value;
+    const masterResult = this.#usExchange === null
+      ? await this.#instrumentMaster.search(symbol, 1).catch(() => null)
+      : null;
+    const master = masterResult?.items[0];
+    let krxFallbackReason: string | null = null;
+    if (
+      this.#usExchange === null &&
+      master?.standardCode !== undefined &&
+      /^KR[0-9A-Z]{10}$/.test(master.standardCode)
+    ) {
+      try {
+        const toDate = previousKoreanBusinessDate();
+        const stock = (await new KrxInvestorFlowClient().getInvestorByStock({
+          symbol,
+          isin: master.standardCode,
+          name: master.name,
+          fromDate: koreanDateOffset(toDate, -7),
+          toDate,
+        })).rows[0] ?? null;
+        if (stock !== null) {
+          return {
+            schemaVersion: 1,
+            state: "PARTIAL",
+            source: "KRX_DATA_PRODUCT",
+            instrument: {
+              instrumentId: `KRX:${symbol}`,
+              symbol,
+              name: master.name,
+              market: master.market,
+              currency: "KRW",
+              investorSummary: {
+                businessDate: calendarDate(stock.businessDate),
+                quality: "PROVIDER_REPORTED_AFTER_CLOSE",
+                participants: [
+                  flowValue("INDIVIDUAL", stock.individual),
+                  flowValue("FOREIGN", stock.foreign),
+                  flowValue("INSTITUTION", stock.institution),
+                ],
+              },
+              programSummary: null,
+              statusMessage: "KRX 통계 CSV 종목별 투자자 수급 수신",
+            },
+            markets: [],
+            fetchedAt: stock.businessDate ? fetchedAt : null,
+            statusMessage:
+              "KRX 통계 CSV 종목별 투자자 수급 수신 · 전체 시장 수급과 프로그램매매는 전용 CSV payload 확인 후 연결됩니다.",
+          };
+        }
+      } catch (error) {
+        krxFallbackReason = safeStatusMessage(error);
+      }
+    } else if (this.#usExchange === null) {
+      krxFallbackReason = "KRX 통계 CSV 조회에 필요한 표준코드(ISIN)를 종목 master에서 찾지 못했습니다.";
+    }
     let credentials;
     try {
       assertLiveReadOnlyAcknowledgement(config);
       credentials = requireKisCredentialsForEnvironment(config, "prod");
     } catch {
-      return unavailable(`${krxProviderNote} KIS 실전 읽기 전용 데이터 키가 필요합니다.`);
+      return unavailable(`${krxProviderNote} KIS 실전 읽기 전용 데이터 키가 필요합니다.${krxFallbackReason ? ` KRX fallback: ${krxFallbackReason}` : ""}`);
     }
     try {
       const auth = this.#authClient("prod", credentials);
@@ -1368,26 +1445,15 @@ export class DesktopRuntime {
       });
       const after = <T>(delayMs: number, request: () => Promise<T>) =>
         new Promise<void>((resolve) => setTimeout(resolve, delayMs)).then(request);
-      const [stockResult, programResult, kospiResult, kosdaqResult, masterResult] =
+      const [stockResult, programResult, kospiResult, kosdaqResult] =
         await Promise.allSettled([
           client.getInvestorByStock(symbol),
           after(80, () => client.getProgramByStock(symbol)),
           after(160, () => client.getMarketInvestorTime("KOSPI")),
           after(240, () => client.getMarketInvestorTime("KOSDAQ")),
-          this.#instrumentMaster.search(symbol, 1),
         ]);
-      const flowValue = (participant: "INDIVIDUAL" | "FOREIGN" | "INSTITUTION" | "PROGRAM", value: { sellQuantity: string; buyQuantity: string; netBuyQuantity: string; sellAmount: string; buyAmount: string; netBuyAmount: string }) => ({ participant, ...value });
-      const calendarDate = (value: string): string =>
-        /^\d{8}$/.test(value)
-          ? `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`
-          : value;
-      const providerClockTime = (value: string): string =>
-        /^\d{6}$/.test(value)
-          ? `${value.slice(0, 2)}:${value.slice(2, 4)}:${value.slice(4, 6)}`
-          : value;
       const stock = stockResult.status === "fulfilled" ? stockResult.value.rows[0] ?? null : null;
       const program = programResult.status === "fulfilled" ? programResult.value.rows[0] ?? null : null;
-      const master = masterResult.status === "fulfilled" ? masterResult.value.items[0] : undefined;
       const resultIssue = (label: string, result: PromiseSettledResult<unknown>): string | null =>
         result.status === "rejected"
           ? `${label} ${safeStatusMessage(result.reason)}`
@@ -1436,10 +1502,10 @@ export class DesktopRuntime {
         fetchedAt,
         statusMessage:
           missing.length === 0
-            ? `${krxProviderNote} KIS 투자자 수급 조회 완료`
+            ? `${krxProviderNote}${krxFallbackReason ? ` KRX fallback: ${krxFallbackReason} ·` : ""} KIS 투자자 수급 조회 완료`
             : instrument || markets.length
-              ? `${krxProviderNote} 일부 수급 미수신: ${missing.join(", ")}${issues.length ? ` · ${issues.join(" · ")}` : ""}`
-              : `${krxProviderNote} KIS 투자자 수급을 받지 못했습니다.${issues.length ? ` ${issues.join(" · ")}` : ""}`,
+              ? `${krxProviderNote}${krxFallbackReason ? ` KRX fallback: ${krxFallbackReason} ·` : ""} 일부 수급 미수신: ${missing.join(", ")}${issues.length ? ` · ${issues.join(" · ")}` : ""}`
+              : `${krxProviderNote}${krxFallbackReason ? ` KRX fallback: ${krxFallbackReason} ·` : ""} KIS 투자자 수급을 받지 못했습니다.${issues.length ? ` ${issues.join(" · ")}` : ""}`,
       };
     } catch (error) {
       return { ...unavailable(safeStatusMessage(error)), state: "ERROR", fetchedAt };
