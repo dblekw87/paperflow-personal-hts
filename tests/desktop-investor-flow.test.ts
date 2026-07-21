@@ -139,10 +139,11 @@ describe("InvestorFlowPanel safety", () => {
       ),
       "utf8",
     );
-    expect(component).toContain("실제 KIS 투자자 수급 데이터 미수신");
+    expect(component).toContain('aria-label="데이터 없음"');
     expect(component).toContain('role="tablist"');
     expect(component).toContain('role="tabpanel"');
-    expect(component).toContain("미수신 값을 0으로 채우지 않습니다");
+    expect(component).toContain("없는 값을 0으로 채우지 않습니다");
+    expect(component).not.toContain(">미수신<");
     expect(component).not.toMatch(/SYNTHETIC_UI_FIXTURE|FIXTURE UI|mockInvestor/i);
   });
 });

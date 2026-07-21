@@ -39,7 +39,7 @@ function toneOf(projection: DesktopInvestorFlowProjection | null) {
 }
 
 function stateLabel(projection: DesktopInvestorFlowProjection | null): string {
-  if (projection === null || projection.state === "UNAVAILABLE") return "미수신";
+  if (projection === null || projection.state === "UNAVAILABLE") return "";
   if (projection.state === "READY") return "실데이터";
   if (projection.state === "PARTIAL") return "일부 수신";
   if (projection.state === "ERROR") return "오류";
@@ -71,7 +71,7 @@ function FlowValue({
   readonly unit: "KRW" | "SHARE";
 }) {
   if (value === null) {
-    return <span className="pt-investor-flow__missing">미수신</span>;
+    return <span className="pt-investor-flow__missing" aria-label="데이터 없음" />;
   }
   return (
     <span className={`pt-investor-flow__number ${signedDirection(value)}`}>
@@ -117,7 +117,7 @@ function FlowTable({
                       <small>원</small>
                     </span>
                   ) : (
-                    <span className="pt-investor-flow__missing">미수신</span>
+                    <span className="pt-investor-flow__missing" aria-label="데이터 없음" />
                   )}
                 </td>
                 <td>
@@ -129,7 +129,7 @@ function FlowTable({
                       <small>원</small>
                     </span>
                   ) : (
-                    <span className="pt-investor-flow__missing">미수신</span>
+                    <span className="pt-investor-flow__missing" aria-label="데이터 없음" />
                   )}
                 </td>
                 <td><FlowValue value={value?.netBuyAmount ?? null} unit="KRW" /></td>
@@ -157,7 +157,7 @@ function selectNextTab<T extends string>(
 }
 
 function statusText(projection: DesktopInvestorFlowProjection | null): string {
-  if (projection === null) return "실제 KIS 투자자 수급 데이터 미수신";
+  if (projection === null || projection.state === "UNAVAILABLE") return "";
   if (projection.state === "LOADING") return "투자자 수급 데이터를 조회하는 중입니다.";
   return projection.statusMessage;
 }
@@ -181,7 +181,9 @@ export function InvestorFlowPanel({ projection }: InvestorFlowPanelProps) {
           <p className="pt-eyebrow">INVESTOR FLOW</p>
           <h2 id={`${id}-title`}>투자자 수급</h2>
         </div>
-        <Badge tone={toneOf(projection)}>{stateLabel(projection)}</Badge>
+        {stateLabel(projection) ? (
+          <Badge tone={toneOf(projection)}>{stateLabel(projection)}</Badge>
+        ) : null}
       </div>
 
       <div className="pt-investor-flow__tabs" role="tablist" aria-label="수급 범위">
@@ -218,10 +220,10 @@ export function InvestorFlowPanel({ projection }: InvestorFlowPanelProps) {
             <span>
               {instrument?.investorSummary
                 ? `${instrument.investorSummary.businessDate} 장 마감 기준`
-                : "개인·외국인·기관 미수신"}
+                : ""}
               {instrument?.programSummary
                 ? ` · 프로그램 ${instrument.programSummary.providerTime} 공급자 시각`
-                : " · 프로그램 미수신"}
+                : ""}
             </span>
           </div>
           <FlowTable
@@ -259,7 +261,7 @@ export function InvestorFlowPanel({ projection }: InvestorFlowPanelProps) {
             <span>
               {marketProjection
                 ? "공급자 snapshot · 기준시각/최종성 미제공"
-                : "개인·외국인·기관 수급 미수신"}
+                : ""}
             </span>
           </div>
           <FlowTable
@@ -270,11 +272,13 @@ export function InvestorFlowPanel({ projection }: InvestorFlowPanelProps) {
         </div>
       )}
 
-      <p className="pt-investor-flow__status" role="status">
-        {statusText(projection)}
-      </p>
+      {statusText(projection) ? (
+        <p className="pt-investor-flow__status" role="status">
+          {statusText(projection)}
+        </p>
+      ) : null}
       <p className="pt-panel__footnote">
-        KIS 읽기 전용 공급자 값만 표시합니다. 금액은 원, 수량은 주 단위이며 미수신 값을 0으로 채우지 않습니다.
+        KIS 읽기 전용 공급자 값만 표시합니다. 금액은 원, 수량은 주 단위이며 없는 값을 0으로 채우지 않습니다.
       </p>
     </section>
   );
