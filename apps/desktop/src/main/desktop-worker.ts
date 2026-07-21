@@ -9,6 +9,7 @@ import type {
   DesktopPaperOrderRequest,
   DesktopPaperOrderResult,
   DesktopRankingProjection,
+  DesktopInvestorFlowProjection,
 } from "../shared/desktop-contracts.js";
 import { DesktopRuntime } from "./desktop-runtime.js";
 
@@ -32,6 +33,7 @@ type WorkerCommand =
       readonly kind: "ranking-get";
       readonly sort: unknown;
     }
+  | { readonly id: string; readonly kind: "investor-flow-get" }
   | {
       readonly id: string;
       readonly kind: "instrument-search";
@@ -63,6 +65,7 @@ type WorkerResult =
   | DesktopMarketContextProjection
   | DesktopPaperOrderResult
   | DesktopRankingProjection
+  | DesktopInvestorFlowProjection
   | null;
 
 function isWorkerCommand(value: unknown): value is WorkerCommand {
@@ -78,6 +81,7 @@ function isWorkerCommand(value: unknown): value is WorkerCommand {
       "market-select-instrument",
       "chart-history",
       "ranking-get",
+      "investor-flow-get",
       "instrument-search",
       "information-get",
       "market-context-get",
@@ -135,6 +139,9 @@ process.on("message", (value: unknown) => {
         break;
       case "ranking-get":
         result = await runtime.getDomesticRanking(value.sort);
+        break;
+      case "investor-flow-get":
+        result = await runtime.getInvestorFlow();
         break;
       case "instrument-search":
         result = await runtime.searchDomesticInstruments(value.query);

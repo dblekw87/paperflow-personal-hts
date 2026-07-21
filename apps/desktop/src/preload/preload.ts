@@ -8,6 +8,7 @@ import {
   isDesktopMarketContextProjection,
   isAllowedExternalInformationUrl,
   isDesktopRankingProjection,
+  isDesktopInvestorFlowProjection,
   isSearchableDomesticInstrumentQuery,
   type DesktopAccountProjection,
   type DesktopBootstrapProjection,
@@ -22,6 +23,7 @@ import {
   type DesktopPaperOrderResult,
   type DesktopRankingProjection,
   type DesktopRankingSort,
+  type DesktopInvestorFlowProjection,
 } from "../shared/desktop-contracts.js";
 
 const APP_METADATA_CHANNEL = DESKTOP_CHANNELS.appMetadata;
@@ -354,6 +356,17 @@ const desktopApi = Object.freeze({
       );
       if (!isDesktopRankingProjection(result)) {
         throw new Error("Invalid ranking projection.");
+      }
+      return Object.freeze(result);
+    },
+  }),
+  investorFlow: Object.freeze({
+    get: async (): Promise<Readonly<DesktopInvestorFlowProjection>> => {
+      const result: unknown = await ipcRenderer.invoke(
+        DESKTOP_CHANNELS.investorFlowGet,
+      );
+      if (!isDesktopInvestorFlowProjection(result)) {
+        throw new Error("Invalid investor-flow projection.");
       }
       return Object.freeze(result);
     },

@@ -366,6 +366,7 @@ function registerDesktopIpc(runtime: DesktopRuntimeClient): void {
     DESKTOP_CHANNELS.marketSelectInstrument,
     DESKTOP_CHANNELS.chartGetHistory,
     DESKTOP_CHANNELS.rankingGet,
+    DESKTOP_CHANNELS.investorFlowGet,
     DESKTOP_CHANNELS.instrumentSearch,
     DESKTOP_CHANNELS.marketContextGet,
     DESKTOP_CHANNELS.informationGet,
@@ -463,6 +464,12 @@ function registerDesktopIpc(runtime: DesktopRuntimeClient): void {
       return runtime.getDomesticRanking(sort as DesktopRankingSort);
     },
   );
+  ipcMain.handle(DESKTOP_CHANNELS.investorFlowGet, async (event) => {
+    if (!isTrustedIpcSender(event)) {
+      throw new Error("Untrusted renderer frame.");
+    }
+    return runtime.getInvestorFlow();
+  });
   ipcMain.handle(
     DESKTOP_CHANNELS.instrumentSearch,
     async (event, query: unknown) => {

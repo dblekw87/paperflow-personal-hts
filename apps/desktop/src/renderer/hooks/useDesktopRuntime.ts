@@ -8,6 +8,7 @@ import type {
   DesktopMarketProjection,
   DesktopInformationFeedProjection,
   DesktopInstrumentSearchProjection,
+  DesktopInvestorFlowProjection,
   DesktopMarketContextProjection,
   DesktopPaperOrderRequest,
   DesktopPaperOrderResult,
@@ -25,6 +26,7 @@ export interface DesktopRuntimeState {
   readonly ranking: DesktopRankingProjection | null;
   readonly informationFeed: DesktopInformationFeedProjection | null;
   readonly marketContext: DesktopMarketContextProjection | null;
+  readonly investorFlow: DesktopInvestorFlowProjection | null;
   readonly instrumentSearch: DesktopInstrumentSearchProjection | null;
   readonly loadChartHistory: (
     interval: DesktopChartInterval,
@@ -48,6 +50,7 @@ export interface DesktopRuntimeState {
   readonly loadMarketContext: (
     forceRefresh?: boolean,
   ) => Promise<DesktopMarketContextProjection | null>;
+  readonly loadInvestorFlow: () => Promise<DesktopInvestorFlowProjection | null>;
 }
 
 export function useDesktopRuntime(): DesktopRuntimeState {
@@ -62,6 +65,8 @@ export function useDesktopRuntime(): DesktopRuntimeState {
     useState<DesktopInformationFeedProjection | null>(null);
   const [marketContext, setMarketContext] =
     useState<DesktopMarketContextProjection | null>(null);
+  const [investorFlow, setInvestorFlow] =
+    useState<DesktopInvestorFlowProjection | null>(null);
   const [instrumentSearch, setInstrumentSearch] =
     useState<DesktopInstrumentSearchProjection | null>(null);
   const requestedChart = useRef<string | null>(null);
@@ -69,6 +74,7 @@ export function useDesktopRuntime(): DesktopRuntimeState {
   const instrumentSelectionSequence = useRef(0);
   const rankingRequestSequence = useRef(0);
   const marketContextRequestSequence = useRef(0);
+  const investorFlowRequestSequence = useRef(0);
   const instrumentSearchSequence = useRef(0);
 
   useEffect(() => {
@@ -186,6 +192,55 @@ export function useDesktopRuntime(): DesktopRuntimeState {
     }, 30_000);
     return () => window.clearInterval(timer);
   }, [loadMarketContext]);
+
+  const loadInvestorFlow = useCallback(
+    async (): Promise<DesktopInvestorFlowProjection | null> => {
+      const api = window.paperTradingDesktop;
+      if (!api) return null;
+      const expectedInstrumentId = activeInstrumentId.current;
+      const requestSequence = ++investorFlowRequestSequence.current;
+      setInvestorFlow((current) => ({
+        schemaVersion: 1,
+        state: "LOADING",
+        source: "KIS_REST",
+        fetchedAt: current?.fetchedAt ?? null,
+        instrument: current?.instrument ?? null,
+        markets: current?.markets ?? [],
+        statusMessage: "KIS 투자자·프로그램 수급을 조회하는 중입니다.",
+      }));
+      try {
+        const projection = await api.investorFlow.get();
+        if (
+          requestSequence !== investorFlowRequestSequence.current ||
+          (projection.instrument !== null &&
+            projection.instrument.instrumentId !== expectedInstrumentId)
+        ) return null;
+        setInvestorFlow(projection);
+        return projection;
+      } catch {
+        if (requestSequence === investorFlowRequestSequence.current) {
+          setInvestorFlow((current) => ({
+            schemaVersion: 1,
+            state: "ERROR",
+            source: "KIS_REST",
+            fetchedAt: current?.fetchedAt ?? null,
+            instrument: null,
+            markets: [],
+            statusMessage: "KIS 투자자 수급 projection을 불러오지 못했습니다.",
+          }));
+        }
+        return null;
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!window.paperTradingDesktop || !market?.instrumentId) return;
+    void loadInvestorFlow();
+    const timer = window.setInterval(() => void loadInvestorFlow(), 30_000);
+    return () => window.clearInterval(timer);
+  }, [loadInvestorFlow, market?.instrumentId]);
 
   const submitPaperOrder = useCallback(
     async (
@@ -323,6 +378,8 @@ export function useDesktopRuntime(): DesktopRuntimeState {
       const requestSequence = ++instrumentSelectionSequence.current;
       const expectedInstrumentId = `KRX:${symbol}`;
       activeInstrumentId.current = expectedInstrumentId;
+      investorFlowRequestSequence.current += 1;
+      setInvestorFlow(null);
       try {
         requestedChart.current = null;
         setChart(null);
@@ -396,6 +453,7 @@ export function useDesktopRuntime(): DesktopRuntimeState {
     ranking,
     informationFeed,
     marketContext,
+    investorFlow,
     instrumentSearch,
     loadChartHistory,
     loadDomesticRanking,
@@ -403,6 +461,7 @@ export function useDesktopRuntime(): DesktopRuntimeState {
     searchDomesticInstruments,
     loadInformationFeed,
     loadMarketContext,
+    loadInvestorFlow,
     submitPaperOrder,
   };
 }

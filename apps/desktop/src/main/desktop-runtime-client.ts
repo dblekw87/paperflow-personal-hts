@@ -8,6 +8,7 @@ import {
   isDesktopInstrumentSearchProjection,
   isDesktopMarketContextProjection,
   isDesktopRankingProjection,
+  isDesktopInvestorFlowProjection,
   type DesktopAccountProjection,
   type DesktopBootstrapProjection,
   type DesktopChartInterval,
@@ -20,6 +21,7 @@ import {
   type DesktopPaperOrderResult,
   type DesktopRankingProjection,
   type DesktopRankingSort,
+  type DesktopInvestorFlowProjection,
 } from "../shared/desktop-contracts.js";
 
 interface PendingRequest {
@@ -228,6 +230,17 @@ export class DesktopRuntimeClient {
     });
     if (!isDesktopRankingProjection(projection)) {
       throw new Error("Desktop worker returned an invalid ranking projection");
+    }
+    return projection;
+  }
+
+  public async getInvestorFlow(): Promise<DesktopInvestorFlowProjection> {
+    const projection = await this.#request<unknown>(
+      { kind: "investor-flow-get" },
+      30_000,
+    );
+    if (!isDesktopInvestorFlowProjection(projection)) {
+      throw new Error("Desktop worker returned an invalid investor-flow projection");
     }
     return projection;
   }

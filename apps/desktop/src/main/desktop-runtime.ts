@@ -54,6 +54,7 @@ import {
 } from "../../../../src/disclosures/sec-client.js";
 import { OpenDartClient } from "../../../../src/disclosures/open-dart-client.js";
 import { KisRestClient } from "../../../../src/kis/rest-client.js";
+import { KisDomesticInvestorFlowClient } from "../../../../src/kis/domestic-investor-flow.js";
 import { DomesticKisLiveStream } from "../../../../src/kis/ws/live-stream.js";
 import { domesticSessionFromProviderTime } from "../../../../src/kis/ws/normalize.js";
 import type { MarketLiveProjection } from "../../../../src/contracts/market-live-projection.js";
@@ -84,6 +85,7 @@ import type {
   DesktopMarketProjection,
   DesktopMarketSession,
   DesktopInformationFeedProjection,
+  DesktopInvestorFlowProjection,
   DesktopInstrumentSearchProjection,
   DesktopMarketContextItemProjection,
   DesktopMarketContextProjection,
@@ -966,6 +968,90 @@ export class DesktopRuntime {
       chart: this.#chart,
       actualOrderCapability: "FORBIDDEN",
     };
+  }
+
+  public async getInvestorFlow(): Promise<DesktopInvestorFlowProjection> {
+    const fetchedAt = new Date().toISOString();
+    const symbol = this.#symbol;
+    const unavailable = (message: string): DesktopInvestorFlowProjection => ({
+      schemaVersion: 1,
+      state: "UNAVAILABLE",
+      source: "KIS_REST",
+      instrument: null,
+      markets: [],
+      fetchedAt: null,
+      statusMessage: message,
+    });
+    const config = loadRuntimeConfig();
+    let credentials;
+    try {
+      assertLiveReadOnlyAcknowledgement(config);
+      credentials = requireKisCredentialsForEnvironment(config, "prod");
+    } catch {
+      return unavailable("KIS 실전 읽기 전용 데이터 키가 필요합니다.");
+    }
+    try {
+      const auth = this.#authClient("prod", credentials);
+      const client = new KisDomesticInvestorFlowClient({
+        environment: "prod",
+        credentials,
+        getAccessToken: () => auth.getAccessToken(),
+      });
+      const [stockResult, programResult, kospiResult, kosdaqResult, masterResult] =
+        await Promise.allSettled([
+          client.getInvestorByStock(symbol),
+          client.getProgramByStock(symbol),
+          client.getMarketInvestorTime("KOSPI"),
+          client.getMarketInvestorTime("KOSDAQ"),
+          this.#instrumentMaster.search(symbol, 1),
+        ]);
+      const flowValue = (participant: "INDIVIDUAL" | "FOREIGN" | "INSTITUTION" | "PROGRAM", value: { sellQuantity: string; buyQuantity: string; netBuyQuantity: string; sellAmount: string; buyAmount: string; netBuyAmount: string }) => ({ participant, ...value });
+      const calendarDate = (value: string): string =>
+        /^\d{8}$/.test(value)
+          ? `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`
+          : value;
+      const providerClockTime = (value: string): string =>
+        /^\d{6}$/.test(value)
+          ? `${value.slice(0, 2)}:${value.slice(2, 4)}:${value.slice(4, 6)}`
+          : value;
+      const stock = stockResult.status === "fulfilled" ? stockResult.value.rows[0] ?? null : null;
+      const program = programResult.status === "fulfilled" ? programResult.value.rows[0] ?? null : null;
+      const master = masterResult.status === "fulfilled" ? masterResult.value.items[0] : undefined;
+      const marketProjection = (result: typeof kospiResult, market: "KOSPI" | "KOSDAQ") => {
+        if (result.status !== "fulfilled" || !result.value.rows[0]) return null;
+        const row = result.value.rows[0];
+        return {
+          market,
+          currency: "KRW" as const,
+          providerTimestamp: null,
+          quality: "PROVIDER_REPORTED_SNAPSHOT_FINALITY_UNKNOWN" as const,
+          participants: [flowValue("INDIVIDUAL", row.individual), flowValue("FOREIGN", row.foreign), flowValue("INSTITUTION", row.institution)],
+          statusMessage: `${market} KIS 조회 스냅샷`,
+        };
+      };
+      const markets = [marketProjection(kospiResult, "KOSPI"), marketProjection(kosdaqResult, "KOSDAQ")].filter((item): item is NonNullable<typeof item> => item !== null);
+      const instrument = stock || program ? {
+        instrumentId: `KRX:${symbol}`,
+        symbol,
+        name: master?.name ?? symbol,
+        market: master?.market ?? "KOSPI",
+        currency: "KRW" as const,
+        investorSummary: stock ? { businessDate: calendarDate(stock.businessDate), quality: "PROVIDER_REPORTED_AFTER_CLOSE" as const, participants: [flowValue("INDIVIDUAL", stock.individual), flowValue("FOREIGN", stock.foreign), flowValue("INSTITUTION", stock.institution)] } : null,
+        programSummary: program ? { providerTime: providerClockTime(program.providerTime), quality: "PROVIDER_REPORTED_FORMING_CUMULATIVE" as const, participant: flowValue("PROGRAM", program.program) } : null,
+        statusMessage: stock && program ? "종목 수급·프로그램 조회 완료" : "일부 종목 수급만 조회됨",
+      } : null;
+      return {
+        schemaVersion: 1,
+        state: instrument && markets.length === 2 ? "READY" : instrument || markets.length ? "PARTIAL" : "ERROR",
+        source: "KIS_REST",
+        instrument,
+        markets,
+        fetchedAt,
+        statusMessage: instrument || markets.length ? "KIS 투자자 수급 조회 완료" : "KIS 투자자 수급을 받지 못했습니다.",
+      };
+    } catch (error) {
+      return { ...unavailable(safeStatusMessage(error)), state: "ERROR", fetchedAt };
+    }
   }
 
   public async getDomesticRanking(

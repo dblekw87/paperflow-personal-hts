@@ -19,6 +19,7 @@ import {
 
 import {
   InstrumentHeader,
+  InvestorFlowPanel,
   MarketContextStrip,
   MarketSidebar,
   NewsPanel,
@@ -1765,6 +1766,8 @@ export function App() {
           />
 
         </div>
+
+        <InvestorFlowPanel projection={desktop.investorFlow} />
 
         <div className="insight-grid">
           <ThemeLeaders

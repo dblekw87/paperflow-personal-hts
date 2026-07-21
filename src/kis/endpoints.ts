@@ -26,6 +26,11 @@ export const KIS_TR = {
   overseasNewsHeadlines: "HHPSTH60100C1",
   domesticIndexPrice: "FHPUP02100000",
   overseasCurrentPrice: "HHDFS00000300",
+  domesticInvestorByStock: "FHKST01010900",
+  domesticInvestorByMarketTime: "FHPTJ04030000",
+  domesticInvestorByMarketDaily: "FHPTJ04040000",
+  domesticProgramByStock: "FHPPG04650101",
+  domesticProgramByStockDaily: "FHPPG04650201",
   domesticOrderBook: "H0STASP0",
   domesticTrade: "H0STCNT0",
   domesticNxtOrderBook: "H0NXASP0",
@@ -58,6 +63,16 @@ export const KIS_PATH = {
     "/uapi/domestic-stock/v1/quotations/inquire-index-price",
   overseasCurrentPrice:
     "/uapi/overseas-price/v1/quotations/price",
+  domesticInvestorByStock:
+    "/uapi/domestic-stock/v1/quotations/inquire-investor",
+  domesticInvestorByMarketTime:
+    "/uapi/domestic-stock/v1/quotations/inquire-investor-time-by-market",
+  domesticInvestorByMarketDaily:
+    "/uapi/domestic-stock/v1/quotations/inquire-investor-daily-by-market",
+  domesticProgramByStock:
+    "/uapi/domestic-stock/v1/quotations/program-trade-by-stock",
+  domesticProgramByStockDaily:
+    "/uapi/domestic-stock/v1/quotations/program-trade-by-stock-daily",
 } as const;
 
 export const KIS_READ_ONLY_ALLOWLIST = {
@@ -74,6 +89,11 @@ export const KIS_READ_ONLY_ALLOWLIST = {
     "/uapi/overseas-price/v1/quotations/news-title",
     "/uapi/domestic-stock/v1/quotations/inquire-index-price",
     "/uapi/overseas-price/v1/quotations/price",
+    "/uapi/domestic-stock/v1/quotations/inquire-investor",
+    "/uapi/domestic-stock/v1/quotations/inquire-investor-time-by-market",
+    "/uapi/domestic-stock/v1/quotations/inquire-investor-daily-by-market",
+    "/uapi/domestic-stock/v1/quotations/program-trade-by-stock",
+    "/uapi/domestic-stock/v1/quotations/program-trade-by-stock-daily",
   ],
   trIds: [
     "FHKST01010100",
@@ -86,6 +106,11 @@ export const KIS_READ_ONLY_ALLOWLIST = {
     "HHPSTH60100C1",
     "FHPUP02100000",
     "HHDFS00000300",
+    "FHKST01010900",
+    "FHPTJ04030000",
+    "FHPTJ04040000",
+    "FHPPG04650101",
+    "FHPPG04650201",
     "H0STASP0",
     "H0STCNT0",
     "H0NXASP0",

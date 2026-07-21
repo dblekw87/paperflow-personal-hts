@@ -12,6 +12,7 @@ import type {
   DesktopPaperOrderResult,
   DesktopRankingProjection,
   DesktopRankingSort,
+  DesktopInvestorFlowProjection,
 } from "../shared/desktop-contracts";
 
 declare global {
@@ -63,6 +64,9 @@ declare global {
       readonly getDomestic: (
         sort: DesktopRankingSort,
       ) => Promise<Readonly<DesktopRankingProjection>>;
+    };
+    readonly investorFlow: {
+      readonly get: () => Promise<Readonly<DesktopInvestorFlowProjection>>;
     };
     readonly instruments: {
       readonly searchDomestic: (

@@ -163,6 +163,65 @@ export interface DesktopRankingProjection {
   readonly statusMessage: string;
 }
 
+export type DesktopInvestorFlowParticipant =
+  | "INDIVIDUAL"
+  | "FOREIGN"
+  | "INSTITUTION"
+  | "PROGRAM";
+
+export interface DesktopInvestorFlowValueProjection {
+  readonly participant: DesktopInvestorFlowParticipant;
+  readonly sellQuantity: string;
+  readonly buyQuantity: string;
+  readonly netBuyQuantity: string;
+  readonly sellAmount: string;
+  readonly buyAmount: string;
+  readonly netBuyAmount: string;
+}
+
+export interface DesktopInstrumentInvestorFlowProjection {
+  readonly instrumentId: string;
+  readonly symbol: string;
+  readonly name: string;
+  readonly market: "KOSPI" | "KOSDAQ";
+  readonly currency: "KRW";
+  readonly investorSummary: {
+    readonly businessDate: string;
+    readonly quality: "PROVIDER_REPORTED_AFTER_CLOSE";
+    readonly participants: readonly DesktopInvestorFlowValueProjection[];
+  } | null;
+  readonly programSummary: {
+    readonly providerTime: string;
+    readonly quality: "PROVIDER_REPORTED_FORMING_CUMULATIVE";
+    readonly participant: DesktopInvestorFlowValueProjection;
+  } | null;
+  readonly statusMessage: string;
+}
+
+export interface DesktopMarketInvestorFlowProjection {
+  readonly market: "KOSPI" | "KOSDAQ";
+  readonly currency: "KRW";
+  readonly providerTimestamp: null;
+  readonly quality: "PROVIDER_REPORTED_SNAPSHOT_FINALITY_UNKNOWN";
+  readonly participants: readonly DesktopInvestorFlowValueProjection[];
+  readonly statusMessage: string;
+}
+
+export interface DesktopInvestorFlowProjection {
+  readonly schemaVersion: 1;
+  readonly state:
+    | "LOADING"
+    | "READY"
+    | "PARTIAL"
+    | "UNAVAILABLE"
+    | "ERROR";
+  readonly source: "KIS_REST";
+  readonly instrument: DesktopInstrumentInvestorFlowProjection | null;
+  readonly markets: readonly DesktopMarketInvestorFlowProjection[];
+  readonly fetchedAt: string | null;
+  readonly statusMessage: string;
+}
+
 export interface DesktopInstrumentSearchItemProjection {
   readonly instrumentId: string;
   readonly symbol: string;
@@ -348,6 +407,7 @@ export const DESKTOP_CHANNELS = Object.freeze({
   chartGetHistory: "papertrading:chart:get-history",
   chartProjection: "papertrading:chart:projection",
   rankingGet: "papertrading:ranking:get",
+  investorFlowGet: "papertrading:investor-flow:get",
   instrumentSearch: "papertrading:instrument:search",
   marketContextGet: "papertrading:market-context:get",
   informationGet: "papertrading:information:get",
@@ -520,6 +580,198 @@ export function isDesktopRankingProjection(
       (item["cumulativeTurnover"] === null ||
         isUnsignedInteger(item["cumulativeTurnover"])),
   );
+}
+
+const signedIntegerPattern = /^(?:0|[+-]?[1-9]\d*)$/;
+
+function isInvestorFlowValue(
+  value: unknown,
+  expectedParticipant: DesktopInvestorFlowParticipant,
+): value is DesktopInvestorFlowValueProjection {
+  if (!isRecord(value) || value["participant"] !== expectedParticipant) {
+    return false;
+  }
+  const sellQuantity = value["sellQuantity"];
+  const buyQuantity = value["buyQuantity"];
+  const netBuyQuantity = value["netBuyQuantity"];
+  const sellAmount = value["sellAmount"];
+  const buyAmount = value["buyAmount"];
+  const netBuyAmount = value["netBuyAmount"];
+  if (
+    !isUnsignedInteger(sellQuantity) ||
+    sellQuantity.length > 40 ||
+    !isUnsignedInteger(buyQuantity) ||
+    buyQuantity.length > 40 ||
+    typeof netBuyQuantity !== "string" ||
+    netBuyQuantity.length > 41 ||
+    !signedIntegerPattern.test(netBuyQuantity) ||
+    !isUnsignedInteger(sellAmount) ||
+    sellAmount.length > 40 ||
+    !isUnsignedInteger(buyAmount) ||
+    buyAmount.length > 40 ||
+    typeof netBuyAmount !== "string" ||
+    netBuyAmount.length > 41 ||
+    !signedIntegerPattern.test(netBuyAmount)
+  ) {
+    return false;
+  }
+  return (
+    BigInt(buyQuantity) - BigInt(sellQuantity) === BigInt(netBuyQuantity) &&
+    BigInt(buyAmount) - BigInt(sellAmount) === BigInt(netBuyAmount)
+  );
+}
+
+function hasExactInvestorParticipants(
+  value: unknown,
+  expected: readonly DesktopInvestorFlowParticipant[],
+): value is readonly DesktopInvestorFlowValueProjection[] {
+  if (!Array.isArray(value) || value.length !== expected.length) return false;
+  const byParticipant = new Map(
+    value.map((item) =>
+      isRecord(item) && typeof item["participant"] === "string"
+        ? [item["participant"], item]
+        : ["", item],
+    ),
+  );
+  return (
+    byParticipant.size === expected.length &&
+    expected.every((participant) =>
+      isInvestorFlowValue(byParticipant.get(participant), participant),
+    )
+  );
+}
+
+function isCalendarDate(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+  const instant = Date.parse(`${value}T00:00:00.000Z`);
+  return (
+    Number.isFinite(instant) &&
+    new Date(instant).toISOString().slice(0, 10) === value
+  );
+}
+
+function isProviderClockTime(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const match = /^(\d{2}):(\d{2}):(\d{2})$/.exec(value);
+  return (
+    match !== null &&
+    Number(match[1]) <= 23 &&
+    Number(match[2]) <= 59 &&
+    Number(match[3]) <= 59
+  );
+}
+
+export function isDesktopInvestorFlowProjection(
+  value: unknown,
+): value is DesktopInvestorFlowProjection {
+  if (
+    !isRecord(value) ||
+    value["schemaVersion"] !== 1 ||
+    !["LOADING", "READY", "PARTIAL", "UNAVAILABLE", "ERROR"].includes(
+      String(value["state"]),
+    ) ||
+    value["source"] !== "KIS_REST" ||
+    !Array.isArray(value["markets"]) ||
+    value["markets"].length > 2 ||
+    (value["fetchedAt"] !== null && !isIsoInstant(value["fetchedAt"])) ||
+    typeof value["statusMessage"] !== "string"
+  ) {
+    return false;
+  }
+
+  const instrument = value["instrument"];
+  if (instrument !== null) {
+    if (!isRecord(instrument)) return false;
+    const symbol = instrument["symbol"];
+    const investorSummary = instrument["investorSummary"];
+    const programSummary = instrument["programSummary"];
+    if (
+      typeof symbol !== "string" ||
+      !/^[0-9A-Z]{6,7}$/.test(symbol) ||
+      instrument["instrumentId"] !== `KRX:${symbol}` ||
+      typeof instrument["name"] !== "string" ||
+      instrument["name"].length === 0 ||
+      instrument["name"].length > 120 ||
+      !["KOSPI", "KOSDAQ"].includes(String(instrument["market"])) ||
+      instrument["currency"] !== "KRW" ||
+      typeof instrument["statusMessage"] !== "string"
+    ) {
+      return false;
+    }
+    if (
+      investorSummary !== null &&
+      (!isRecord(investorSummary) ||
+        !isCalendarDate(investorSummary["businessDate"]) ||
+        investorSummary["quality"] !== "PROVIDER_REPORTED_AFTER_CLOSE" ||
+        !hasExactInvestorParticipants(investorSummary["participants"], [
+          "INDIVIDUAL",
+          "FOREIGN",
+          "INSTITUTION",
+        ]))
+    ) {
+      return false;
+    }
+    if (
+      programSummary !== null &&
+      (!isRecord(programSummary) ||
+        !isProviderClockTime(programSummary["providerTime"]) ||
+        programSummary["quality"] !==
+          "PROVIDER_REPORTED_FORMING_CUMULATIVE" ||
+        !isInvestorFlowValue(programSummary["participant"], "PROGRAM"))
+    ) {
+      return false;
+    }
+  }
+
+  const seenMarkets = new Set<string>();
+  for (const market of value["markets"]) {
+    if (!isRecord(market)) return false;
+    const marketId = market["market"];
+    if (
+      !["KOSPI", "KOSDAQ"].includes(String(marketId)) ||
+      seenMarkets.has(String(marketId)) ||
+      market["currency"] !== "KRW" ||
+      market["providerTimestamp"] !== null ||
+      market["quality"] !==
+        "PROVIDER_REPORTED_SNAPSHOT_FINALITY_UNKNOWN" ||
+      !hasExactInvestorParticipants(market["participants"], [
+        "INDIVIDUAL",
+        "FOREIGN",
+        "INSTITUTION",
+      ]) ||
+      typeof market["statusMessage"] !== "string"
+    ) {
+      return false;
+    }
+    seenMarkets.add(String(marketId));
+  }
+
+  const hasData =
+    (isRecord(instrument) &&
+      (instrument["investorSummary"] !== null ||
+        instrument["programSummary"] !== null)) ||
+    value["markets"].length > 0;
+  if (hasData && !isIsoInstant(value["fetchedAt"])) return false;
+  if (
+    value["state"] === "READY" &&
+    (!isRecord(instrument) ||
+      instrument["investorSummary"] === null ||
+      instrument["programSummary"] === null ||
+      seenMarkets.size !== 2)
+  ) {
+    return false;
+  }
+  if (value["state"] === "PARTIAL" && !hasData) return false;
+  if (
+    value["state"] === "UNAVAILABLE" &&
+    (instrument !== null || value["markets"].length !== 0 ||
+      value["fetchedAt"] !== null)
+  ) {
+    return false;
+  }
+  return true;
 }
 
 export function isDesktopInstrumentSearchProjection(
