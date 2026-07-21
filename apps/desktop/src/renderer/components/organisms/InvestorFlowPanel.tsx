@@ -75,7 +75,7 @@ function FlowValue({
   readonly unit: "KRW" | "SHARE";
 }) {
   if (value === null) {
-    return <span className="pt-investor-flow__missing" aria-label="데이터 없음">—</span>;
+    return <span className="pt-investor-flow__missing" aria-label="데이터 없음">미제공</span>;
   }
   return (
     <span className={`pt-investor-flow__number ${signedDirection(value)}`}>
@@ -88,10 +88,12 @@ function FlowTable({
   participants,
   values,
   label,
+  emptyMessage,
 }: {
   readonly participants: readonly DesktopInvestorFlowParticipant[];
   readonly values: readonly DesktopInvestorFlowValueProjection[];
   readonly label: string;
+  readonly emptyMessage: string;
 }) {
   const byParticipant = new Map(values.map((value) => [value.participant, value]));
   return (
@@ -107,7 +109,14 @@ function FlowTable({
           </tr>
         </thead>
         <tbody>
-          {participants.map((participant) => {
+          {values.length === 0 ? (
+            <tr>
+              <td colSpan={5}>
+                <span className="pt-investor-flow__missing">{emptyMessage}</span>
+              </td>
+            </tr>
+          ) : null}
+          {values.length > 0 ? participants.map((participant) => {
             const value = byParticipant.get(participant) ?? null;
             return (
               <tr key={participant}>
@@ -121,7 +130,7 @@ function FlowTable({
                       <small>원</small>
                     </span>
                   ) : (
-                    <span className="pt-investor-flow__missing" aria-label="데이터 없음">—</span>
+                    <span className="pt-investor-flow__missing" aria-label="데이터 없음">미제공</span>
                   )}
                 </td>
                 <td>
@@ -133,14 +142,14 @@ function FlowTable({
                       <small>원</small>
                     </span>
                   ) : (
-                    <span className="pt-investor-flow__missing" aria-label="데이터 없음">—</span>
+                    <span className="pt-investor-flow__missing" aria-label="데이터 없음">미제공</span>
                   )}
                 </td>
                 <td><FlowValue value={value?.netBuyAmount ?? null} unit="KRW" /></td>
                 <td><FlowValue value={value?.netBuyQuantity ?? null} unit="SHARE" /></td>
               </tr>
             );
-          })}
+          }) : null}
         </tbody>
       </table>
     </div>
@@ -270,6 +279,11 @@ export function InvestorFlowPanel({
             participants={instrumentParticipants}
             values={instrumentValues}
             label="종목별 투자자 수급"
+            emptyMessage={
+              projection?.state === "ERROR" || projection?.state === "UNAVAILABLE"
+                ? statusText(projection)
+                : "선택 종목의 투자자 수급 데이터가 아직 수신되지 않았습니다."
+            }
           />
         </div>
       ) : (
@@ -308,6 +322,11 @@ export function InvestorFlowPanel({
             participants={marketParticipants}
             values={marketProjection?.participants ?? []}
             label={`${market} 시장별 투자자 수급`}
+            emptyMessage={
+              projection?.state === "ERROR" || projection?.state === "UNAVAILABLE"
+                ? statusText(projection)
+                : `${market} 시장별 투자자 수급 데이터가 아직 수신되지 않았습니다.`
+            }
           />
         </div>
       )}
@@ -318,7 +337,7 @@ export function InvestorFlowPanel({
         </p>
       ) : null}
       <p className="pt-panel__footnote">
-        KIS 읽기 전용 공급자 값만 표시합니다. 금액은 원, 수량은 주 단위이며 없는 값을 0으로 채우지 않습니다.
+        거래소 원천 수급을 우선하고 미연결 항목은 KIS 읽기 전용 fallback으로 표시합니다. 금액은 원, 수량은 주 단위이며 없는 값을 0으로 채우지 않습니다.
       </p>
     </section>
   );

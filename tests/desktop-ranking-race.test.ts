@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { isCurrentDesktopRankingResponse } from "../apps/desktop/src/shared/desktop-contracts.js";
+import {
+  isCurrentDesktopRankingResponse,
+  isDesktopRankingProjection,
+} from "../apps/desktop/src/shared/desktop-contracts.js";
 import { projectDomesticFluctuationItems } from "../apps/desktop/src/main/desktop-runtime.js";
 
 const fluctuationCandidates = [
@@ -109,5 +112,38 @@ describe("desktop ranking latest-wins guard", () => {
       cumulativeVolume: "1000000",
       cumulativeTurnover: null,
     });
+  });
+
+  it("accepts KRX OpenAPI as a domestic ranking projection source", () => {
+    expect(
+      isDesktopRankingProjection({
+        schemaVersion: 1,
+        market: "KRX",
+        sort: "TURNOVER",
+        state: "READY",
+        source: "KRX_OPENAPI",
+        fetchedAt: "2026-07-22T00:00:00.000Z",
+        statusMessage: "KRX OpenAPI 일별매매정보 기준 순위",
+        items: [
+          {
+            rank: "1",
+            instrumentId: "KRX:005930",
+            symbol: "005930",
+            name: "삼성전자",
+            price: "259000",
+            change: "15000",
+            changeRate: "6.15",
+            cumulativeVolume: "20386896",
+            previousVolume: null,
+            averageVolume: null,
+            volumeIncreaseRate: null,
+            volumeTurnoverRate: null,
+            averageTurnover: null,
+            turnoverTurnoverRate: null,
+            cumulativeTurnover: "5224700000000",
+          },
+        ],
+      }),
+    ).toBe(true);
   });
 });

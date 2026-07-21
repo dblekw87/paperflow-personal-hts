@@ -9,6 +9,8 @@ import {
   requirePublicDataPortalCredentials,
   requireFinnhubApiKey,
   requireSecRequestIdentity,
+  hasKrxOpenApiCredentials,
+  requireKrxOpenApiCredentials,
   assertLiveReadOnlyAcknowledgement,
 } from "../../../../src/config/runtime-config.js";
 import {
@@ -73,6 +75,8 @@ import { KindListingScheduleClient } from "../../../../src/calendar/kind-listing
 import { openDartFilingsToCalendarEvents } from "../../../../src/calendar/open-dart-calendar-adapter.js";
 import { KisRestClient } from "../../../../src/kis/rest-client.js";
 import { KisDomesticInvestorFlowClient } from "../../../../src/kis/domestic-investor-flow.js";
+import { KrxOpenApiClient } from "../../../../src/krx/openapi-client.js";
+import { KrxDailyStockTradeClient } from "../../../../src/krx/daily-stock-trade.js";
 import { DomesticKisLiveStream } from "../../../../src/kis/ws/live-stream.js";
 import { domesticSessionFromProviderTime } from "../../../../src/kis/ws/normalize.js";
 import type { MarketLiveProjection } from "../../../../src/contracts/market-live-projection.js";
@@ -463,6 +467,24 @@ function koreanCalendarDate(now = new Date()): string {
   const part = (type: Intl.DateTimeFormatPartTypes) =>
     parts.find((entry) => entry.type === type)?.value ?? "";
   return `${part("year")}${part("month")}${part("day")}`;
+}
+
+function previousKoreanBusinessDate(now = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((entry) => entry.type === type)?.value ?? "";
+  const cursor = new Date(
+    Date.UTC(Number(part("year")), Number(part("month")) - 1, Number(part("day"))),
+  );
+  do {
+    cursor.setUTCDate(cursor.getUTCDate() - 1);
+  } while (cursor.getUTCDay() === 0 || cursor.getUTCDay() === 6);
+  return cursor.toISOString().slice(0, 10).replaceAll("-", "");
 }
 
 function openDartDateInstant(providerDate: string): string {
@@ -1317,6 +1339,10 @@ export class DesktopRuntime {
   public async getInvestorFlow(): Promise<DesktopInvestorFlowProjection> {
     const fetchedAt = new Date().toISOString();
     const symbol = this.#symbol;
+    const config = loadRuntimeConfig();
+    const krxProviderNote = hasKrxOpenApiCredentials(config)
+      ? "KRX OpenAPI 키는 구성됐지만 공개 서비스 목록에서 수급·공매도 전용 endpoint가 아직 확인되지 않아 KIS 읽기 전용으로 fallback합니다."
+      : "KRX 수급·공매도 provider 키가 없어 KIS 읽기 전용으로 fallback합니다.";
     const unavailable = (message: string): DesktopInvestorFlowProjection => ({
       schemaVersion: 1,
       state: "UNAVAILABLE",
@@ -1326,13 +1352,12 @@ export class DesktopRuntime {
       fetchedAt: null,
       statusMessage: message,
     });
-    const config = loadRuntimeConfig();
     let credentials;
     try {
       assertLiveReadOnlyAcknowledgement(config);
       credentials = requireKisCredentialsForEnvironment(config, "prod");
     } catch {
-      return unavailable("KIS 실전 읽기 전용 데이터 키가 필요합니다.");
+      return unavailable(`${krxProviderNote} KIS 실전 읽기 전용 데이터 키가 필요합니다.`);
     }
     try {
       const auth = this.#authClient("prod", credentials);
@@ -1363,6 +1388,10 @@ export class DesktopRuntime {
       const stock = stockResult.status === "fulfilled" ? stockResult.value.rows[0] ?? null : null;
       const program = programResult.status === "fulfilled" ? programResult.value.rows[0] ?? null : null;
       const master = masterResult.status === "fulfilled" ? masterResult.value.items[0] : undefined;
+      const resultIssue = (label: string, result: PromiseSettledResult<unknown>): string | null =>
+        result.status === "rejected"
+          ? `${label} ${safeStatusMessage(result.reason)}`
+          : null;
       const marketProjection = (result: typeof kospiResult, market: "KOSPI" | "KOSDAQ") => {
         if (result.status !== "fulfilled" || !result.value.rows[0]) return null;
         const row = result.value.rows[0];
@@ -1381,6 +1410,12 @@ export class DesktopRuntime {
         program ? null : "프로그램",
         markets.some((item) => item.market === "KOSPI") ? null : "KOSPI",
         markets.some((item) => item.market === "KOSDAQ") ? null : "KOSDAQ",
+      ].filter((item): item is string => item !== null);
+      const issues = [
+        resultIssue("종목", stockResult),
+        resultIssue("프로그램", programResult),
+        resultIssue("KOSPI", kospiResult),
+        resultIssue("KOSDAQ", kosdaqResult),
       ].filter((item): item is string => item !== null);
       const instrument = stock || program ? {
         instrumentId: `KRX:${symbol}`,
@@ -1401,10 +1436,10 @@ export class DesktopRuntime {
         fetchedAt,
         statusMessage:
           missing.length === 0
-            ? "KIS 투자자 수급 조회 완료"
+            ? `${krxProviderNote} KIS 투자자 수급 조회 완료`
             : instrument || markets.length
-              ? `일부 수급 미수신: ${missing.join(", ")}`
-              : "KIS 투자자 수급을 받지 못했습니다.",
+              ? `${krxProviderNote} 일부 수급 미수신: ${missing.join(", ")}${issues.length ? ` · ${issues.join(" · ")}` : ""}`
+              : `${krxProviderNote} KIS 투자자 수급을 받지 못했습니다.${issues.length ? ` ${issues.join(" · ")}` : ""}`,
       };
     } catch (error) {
       return { ...unavailable(safeStatusMessage(error)), state: "ERROR", fetchedAt };
@@ -1418,6 +1453,7 @@ export class DesktopRuntime {
     const sort = validateRankingSort(rawSort);
     const market = rawMarket === "US" ? "US" : "KRX";
     const config = loadRuntimeConfig();
+    let krxFallbackReason: string | null = null;
     try {
       assertLiveReadOnlyAcknowledgement(config);
       if (market === "US") {
@@ -1445,6 +1481,51 @@ export class DesktopRuntime {
             averageTurnover: null, turnoverTurnoverRate: null, cumulativeTurnover: item.cumulativeTurnover,
           })),
         };
+      }
+      if (sort !== "VOLUME_INCREASE" && hasKrxOpenApiCredentials(config)) {
+        try {
+          const ranking = await new KrxDailyStockTradeClient({
+            client: new KrxOpenApiClient({
+              credentials: requireKrxOpenApiCredentials(config),
+              timeoutMs: 3_500,
+            }),
+          }).getRanking({
+            businessDate: previousKoreanBusinessDate(),
+            sort,
+            limit: 100,
+          });
+          if (ranking.items.length > 0) {
+            return {
+              schemaVersion: 1,
+              market: "KRX",
+              sort,
+              state: "READY",
+              source: ranking.source,
+              fetchedAt: ranking.fetchedAt,
+              statusMessage: `KRX OpenAPI ${ranking.businessDate} 일별매매정보 기준 ${ranking.items.length}개 종목 순위입니다.`,
+              items: ranking.items.map((item, index) => ({
+                rank: String(index + 1),
+                instrumentId: `KRX:${item.symbol}`,
+                symbol: item.symbol,
+                name: item.name,
+                price: item.price,
+                change: item.change,
+                changeRate: item.changeRate,
+                cumulativeVolume: item.cumulativeVolume,
+                previousVolume: null,
+                averageVolume: null,
+                volumeIncreaseRate: null,
+                volumeTurnoverRate: null,
+                averageTurnover: null,
+                turnoverTurnoverRate: null,
+                cumulativeTurnover: item.cumulativeTurnover,
+              })),
+            };
+          }
+          krxFallbackReason = "KRX OpenAPI가 조회 기준일에 빈 순위를 반환했습니다.";
+        } catch (error) {
+          krxFallbackReason = safeStatusMessage(error);
+        }
       }
       if (
         sort === "CHANGE_RATE_GAINERS" ||
@@ -1482,8 +1563,8 @@ export class DesktopRuntime {
           fetchedAt: ranking.fetchedAt,
           statusMessage:
             sort === "CHANGE_RATE_GAINERS"
-              ? "KIS 실전 등락률 후보를 상승률 순으로 재정렬했습니다."
-              : "KIS 실전 등락률 후보를 하락률 순으로 재정렬했습니다.",
+              ? `${krxFallbackReason ? `KRX fallback: ${krxFallbackReason} · ` : ""}KIS 실전 등락률 후보를 상승률 순으로 재정렬했습니다.`
+              : `${krxFallbackReason ? `KRX fallback: ${krxFallbackReason} · ` : ""}KIS 실전 등락률 후보를 하락률 순으로 재정렬했습니다.`,
           items: projectDomesticFluctuationItems(ranking.items, sort).slice(
             0,
             100,
@@ -1531,8 +1612,8 @@ export class DesktopRuntime {
           dailyItems.length === 0
             ? "KIS 조회 거래일에 체결된 거래가 아직 없어 순위를 표시하지 않습니다. 장 시작 전 0 거래량을 -100%로 계산하지 않습니다."
             : sort === "AVERAGE_VOLUME"
-              ? "KIS 평균거래량 상위 후보군을 조회 거래일 현재 거래량순으로 재정렬했습니다."
-              : "KIS KRX 조회 거래일 데이터입니다. 거래량·거래대금은 거래일마다 새로 시작하며, 거래량 증감률은 조회 거래일과 전 거래일 전체를 비교합니다.",
+              ? `${krxFallbackReason ? `KRX fallback: ${krxFallbackReason} · ` : ""}KIS 평균거래량 상위 후보군을 조회 거래일 현재 거래량순으로 재정렬했습니다.`
+              : `${krxFallbackReason ? `KRX fallback: ${krxFallbackReason} · ` : ""}KIS KRX 조회 거래일 데이터입니다. 거래량·거래대금은 거래일마다 새로 시작하며, 거래량 증감률은 조회 거래일과 전 거래일 전체를 비교합니다.`,
         items: dailyItems
           .slice(0, 100)
           .map((item, index) => ({
@@ -1548,11 +1629,11 @@ export class DesktopRuntime {
         sort,
         state: "ERROR",
         items: [],
-        source: "KIS_REST",
+        source: market === "KRX" && krxFallbackReason !== null ? "KRX_OPENAPI" : "KIS_REST",
         fetchedAt: null,
         statusMessage:
           error instanceof Error
-            ? `KIS 거래 순위를 불러오지 못했습니다: ${error.message}`
+            ? `${krxFallbackReason ? `KRX fallback: ${krxFallbackReason} · ` : ""}KIS 거래 순위를 불러오지 못했습니다: ${error.message}`
             : "KIS 거래 순위를 불러오지 못했습니다.",
       };
     }

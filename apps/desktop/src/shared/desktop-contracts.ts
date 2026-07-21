@@ -202,7 +202,7 @@ export interface DesktopRankingProjection {
   readonly sort: DesktopRankingSort;
   readonly state: "DISABLED" | "LOADING" | "READY" | "ERROR";
   readonly items: readonly DesktopRankingItemProjection[];
-  readonly source: "KIS_REST";
+  readonly source: "KIS_REST" | "KRX_OPENAPI";
   readonly fetchedAt: string | null;
   readonly statusMessage: string;
 }
@@ -259,7 +259,7 @@ export interface DesktopInvestorFlowProjection {
     | "PARTIAL"
     | "UNAVAILABLE"
     | "ERROR";
-  readonly source: "KIS_REST";
+  readonly source: "KIS_REST" | "KRX_OPENAPI" | "KRX_DATA_PRODUCT";
   readonly instrument: DesktopInstrumentInvestorFlowProjection | null;
   readonly markets: readonly DesktopMarketInvestorFlowProjection[];
   readonly fetchedAt: string | null;
@@ -625,7 +625,7 @@ export function isDesktopRankingProjection(
     !["DISABLED", "LOADING", "READY", "ERROR"].includes(
       String(value["state"]),
     ) ||
-    value["source"] !== "KIS_REST" ||
+    !["KIS_REST", "KRX_OPENAPI"].includes(String(value["source"])) ||
     (value["fetchedAt"] !== null && !isIsoInstant(value["fetchedAt"])) ||
     (value["state"] === "READY" && !isIsoInstant(value["fetchedAt"])) ||
     typeof value["statusMessage"] !== "string" ||
@@ -748,7 +748,9 @@ export function isDesktopInvestorFlowProjection(
     !["LOADING", "READY", "PARTIAL", "UNAVAILABLE", "ERROR"].includes(
       String(value["state"]),
     ) ||
-    value["source"] !== "KIS_REST" ||
+    !["KIS_REST", "KRX_OPENAPI", "KRX_DATA_PRODUCT"].includes(
+      String(value["source"]),
+    ) ||
     !Array.isArray(value["markets"]) ||
     value["markets"].length > 2 ||
     (value["fetchedAt"] !== null && !isIsoInstant(value["fetchedAt"])) ||

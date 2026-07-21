@@ -2,7 +2,7 @@
 
 ## 1. 역할
 
-KIS는 읽기 전용 시장 데이터 공급자다. 제품이 사용하는 기능은 인증, 현재가, 호가, 체결, 차트, 종목정보, 지수·시장상태, 순위, 수급, 뉴스다. 주문 관련 KIS 엔드포인트는 어댑터 registry와 네트워크 allowlist에 등록하지 않는다.
+KIS는 읽기 전용 시장 데이터 공급자다. 제품이 사용하는 기능은 인증, 현재가, 호가, 체결, 차트, 종목정보, 지수·시장상태, 순위, 뉴스다. 투자자 수급은 거래소 원천 KRX provider를 우선하되, 전용 endpoint 연결 전까지 KIS 실전 읽기 전용 REST를 fallback으로 사용한다. 주문 관련 KIS 엔드포인트는 어댑터 registry와 네트워크 allowlist에 등록하지 않는다.
 
 참조 기준은 `C:\Users\Pangwoo\open-trading-api`의 `examples_user`, `examples_llm`, `stocks_info`, `MCP/Kis Trading MCP/configs`다. 이 설계의 기준 commit은 `885dd4e2f5c37e4f7e23dd63c15555a9967bc7bc`, 확인일은 2026-07-20이다. 공식 샘플은 변경될 수 있으므로 구현 커밋에도 참조 SHA와 확인일을 기록한다.
 
@@ -42,8 +42,8 @@ type ExecutionMode = "LOCAL_SIMULATION";
 | 거래량·증가율·거래금액 순위 | `volume_rank`                  | `/uapi/domestic-stock/v1/quotations/volume-rank`                  |
 | 체결강도 순위               | `volume_power`                 | `/uapi/domestic-stock/v1/ranking/volume-power`                    |
 | 시가총액 순위               | `market_cap`                   | `/uapi/domestic-stock/v1/ranking/market-cap`                      |
-| 현재가 투자자               | `inquire_investor`             | `/uapi/domestic-stock/v1/quotations/inquire-investor`             |
-| 기관·외국인 집계            | `foreign_institution_total`    | `/uapi/domestic-stock/v1/quotations/foreign-institution-total`    |
+| 현재가 투자자 fallback      | `inquire_investor`             | `/uapi/domestic-stock/v1/quotations/inquire-investor`             |
+| 기관·외국인 집계 fallback   | `foreign_institution_total`    | `/uapi/domestic-stock/v1/quotations/foreign-institution-total`    |
 
 2026-07-21 실전 읽기 전용 재검증에서 `fluctuation`의
 `fid_rank_sort_cls_code`는 상승률 `0`, 하락률 `1`의 한 자리 값으로 확인했다.

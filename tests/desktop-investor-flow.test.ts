@@ -67,6 +67,13 @@ function validProjection(): DesktopInvestorFlowProjection {
 describe("desktop investor-flow projection", () => {
   it("accepts exact stock, program and KOSPI/KOSDAQ provider projections", () => {
     expect(isDesktopInvestorFlowProjection(validProjection())).toBe(true);
+    expect(
+      isDesktopInvestorFlowProjection({
+        ...validProjection(),
+        source: "KRX_DATA_PRODUCT",
+        state: "PARTIAL",
+      }),
+    ).toBe(true);
   });
 
   it("rejects a program row inside a market projection", () => {
@@ -142,6 +149,7 @@ describe("InvestorFlowPanel safety", () => {
     expect(component).toContain('aria-label="데이터 없음"');
     expect(component).toContain('role="tablist"');
     expect(component).toContain('role="tabpanel"');
+    expect(component).toContain("거래소 원천 수급을 우선");
     expect(component).toContain("없는 값을 0으로 채우지 않습니다");
     expect(component).not.toContain(">미수신<");
     expect(component).not.toMatch(/SYNTHETIC_UI_FIXTURE|FIXTURE UI|mockInvestor/i);
