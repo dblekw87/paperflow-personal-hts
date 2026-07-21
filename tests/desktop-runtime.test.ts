@@ -260,6 +260,50 @@ describe("Electron desktop runtime boundary", () => {
     }
   });
 
+  it("decreases the local position and increases cash when an immediate sell fills", async () => {
+    const userDataPath = mkdtempSync(join(tmpdir(), "desktop-local-sell-"));
+    temporaryDirectories.push(userDataPath);
+    const runtime = createRuntime(userDataPath);
+    try {
+      const receivedAt = new Date().toISOString();
+      runtime.applyReadOnlyMarketProjection(
+        liveProjection(receivedAt, "100", "1"),
+      );
+      runtime.submitPaperOrder({
+        requestId: "local-buy-before-sell",
+        instrumentId: "KRX:005930",
+        side: "BUY",
+        orderType: "MARKET",
+        quantity: "2",
+        limitPrice: null,
+      });
+      const result = runtime.submitPaperOrder({
+        requestId: "local-immediate-sell-1",
+        instrumentId: "KRX:005930",
+        side: "SELL",
+        orderType: "MARKET",
+        quantity: "1",
+        limitPrice: null,
+      });
+
+      expect(result).toMatchObject({
+        accepted: true,
+        status: "FILLED",
+        account: {
+          positions: [{ instrumentId: "KRX:005930", quantity: "1" }],
+        },
+      });
+      expect(result.account.cashMinor).toBe("99929562");
+      expect(result.account.fills.at(-1)).toMatchObject({
+        side: "SELL",
+        price: "69900",
+        quantity: "1",
+      });
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it("keeps the last real order book when a later projection has no book", async () => {
     const userDataPath = mkdtempSync(join(tmpdir(), "desktop-last-book-"));
     temporaryDirectories.push(userDataPath);
