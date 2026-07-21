@@ -83,7 +83,7 @@ export function ShortSellingPanel({
         </div>
         <div>
           <dt>대차잔고</dt>
-          <dd>미제공</dd>
+          <dd>보류</dd>
         </div>
       </dl>
       <p className="pt-short-selling__status" role="status">
@@ -93,7 +93,7 @@ export function ShortSellingPanel({
             : "미국 short interest/short-sale volume provider가 연결되기 전까지 수치를 표시하지 않습니다.")}
       </p>
       <p className="pt-panel__footnote">
-        공매도 데이터가 연결되어도 로컬 모의투자 엔진의 공매도 주문 금지는 유지합니다.
+        대차잔고는 공식 row-level 원천 확인 전까지 보류합니다. 공매도 데이터가 연결되어도 로컬 모의투자 엔진의 공매도 주문 금지는 유지합니다.
       </p>
     </section>
   );

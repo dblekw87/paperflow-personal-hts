@@ -51,10 +51,12 @@ describe("ShortSellingPanel safety", () => {
     expect(component).toContain("KRX 공매도 거래·잔고");
     expect(component).toContain("FINRA/거래소 short interest");
     expect(component).toContain("미제공");
+    expect(component).toContain("보류");
     expect(component).toContain("KRX CSV");
     expect(component).toContain("shortSellTurnover");
     expect(component).toContain("shortSellRatio");
     expect(component).toContain("shortBalanceTurnover");
+    expect(component).toContain("공식 row-level 원천 확인 전까지 보류");
     expect(component).toContain("공매도 주문 금지는 유지");
     expect(component).not.toMatch(/SYNTHETIC_UI_FIXTURE|mockShort|shortRatio:|shortBalance:/i);
   });
