@@ -26,6 +26,7 @@ import {
   NewsPanel,
   OrderBookPanel,
   PortfolioStrip,
+  ShortSellingPanel,
   ThemeLeaders,
   type OrderTicketDraft,
 } from "../components/index.js";
@@ -2282,7 +2283,6 @@ export function App() {
             onRefresh={() => void desktop.loadInvestorFlow()}
           />
         ) : null}
-
         <InstrumentHeader
           name={activeInstrumentName}
           symbol={activeSymbol}
@@ -2598,6 +2598,11 @@ export function App() {
             onRefresh={() => void desktop.loadInvestorFlow()}
           />
         ) : null}
+        <ShortSellingPanel
+          instrumentId={activeInstrumentId}
+          symbol={activeSymbol}
+          marketScope={isUsSelection ? "US" : "KR"}
+        />
 
         <div
           className={

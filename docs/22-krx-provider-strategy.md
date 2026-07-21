@@ -39,9 +39,11 @@ PaperFlow는 국내 시장 데이터 공급원을 다음처럼 분리한다.
 1. 완료: KRX OpenAPI 공통 client와 redaction/error contract.
 2. 완료: KRX 일별매매정보 adapter: KOSPI `sto/stk_bydd_trd`, KOSDAQ `sto/ksq_bydd_trd`.
 3. KRX 종목기본정보 adapter: KOSPI/KOSDAQ basic info를 KIS master fallback과 비교.
-4. 수급 provider spike: 계정 내 명세서에서 수급 전용 API ID 또는 data product endpoint 확인.
-5. 공매도 provider spike: 계정 내 명세서에서 공매도 거래/잔고 endpoint 확인.
-6. 투자자 수급 UI source를 KRX로 전환하고 KIS 수급 adapter는 fallback로 격하.
+4. UI 완료: 공매도 카드 shell. 실제 KRX 공매도 거래·잔고 endpoint 확인 전에는 `미제공`과 미연결 사유만 표시한다.
+5. UI 완료: 투자자 수급 source badge. KRX source가 연결되면 `KRX_OPENAPI` 또는 `KRX_DATA_PRODUCT`, 현재 fallback은 `KIS_REST`로 표시한다.
+6. 수급 provider spike: 계정 내 명세서에서 수급 전용 API ID 또는 data product endpoint 확인.
+7. 공매도 provider spike: 계정 내 명세서에서 공매도 거래/잔고 endpoint 확인.
+8. 실제 provider 확인 후 투자자 수급 값을 KRX로 전환하고 KIS 수급 adapter는 fallback로 격하.
 
 2026-07-22 현재 Electron 국내 순위는 `TURNOVER`, `AVERAGE_VOLUME`,
 `CHANGE_RATE_GAINERS`, `CHANGE_RATE_LOSERS`에서 KRX OpenAPI 일별매매정보를 먼저

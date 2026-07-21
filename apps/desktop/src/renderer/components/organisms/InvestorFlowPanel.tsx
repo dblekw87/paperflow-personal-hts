@@ -50,6 +50,12 @@ function stateLabel(projection: DesktopInvestorFlowProjection | null): string {
   return "조회 중";
 }
 
+function sourceLabel(projection: DesktopInvestorFlowProjection | null): string {
+  if (projection?.source === "KRX_OPENAPI") return "KRX OpenAPI";
+  if (projection?.source === "KRX_DATA_PRODUCT") return "KRX Data";
+  return "KIS fallback";
+}
+
 function signedDirection(value: string): "positive" | "negative" | "flat" {
   const integer = BigInt(value);
   if (integer > 0n) return "positive";
@@ -222,6 +228,9 @@ export function InvestorFlowPanel({
         </div>
         <div className="pt-investor-flow__actions">
           <span>{lastSuccessLabel(projection)}</span>
+          <Badge tone={projection?.source === "KIS_REST" ? "warning" : "info"}>
+            {sourceLabel(projection)}
+          </Badge>
           <Badge tone={toneOf(projection)}>{stateLabel(projection)}</Badge>
           <button
             type="button"

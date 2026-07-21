@@ -1,5 +1,6 @@
 export * from "./InstrumentHeader";
 export * from "./InvestorFlowPanel";
+export * from "./ShortSellingPanel";
 export * from "./MarketSidebar";
 export * from "./MarketContextStrip";
 export * from "./NewsPanel";

@@ -3070,6 +3070,83 @@ select:focus-visible {
   font-size: 12px;
 }
 
+.pt-short-selling {
+  margin-top: 8px;
+}
+
+.pt-short-selling__context {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 10px;
+  margin-top: 9px;
+  padding: 8px 10px;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-sm);
+}
+
+.pt-short-selling__context svg {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  color: var(--color-warning);
+}
+
+.pt-short-selling__context div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.pt-short-selling__context strong,
+.pt-short-selling__context span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pt-short-selling__context strong {
+  color: var(--color-text-primary);
+}
+
+.pt-short-selling__metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 7px;
+  margin: 8px 0 0;
+}
+
+.pt-short-selling__metrics div {
+  min-width: 0;
+  padding: 8px 9px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-sm);
+}
+
+.pt-short-selling__metrics dt {
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pt-short-selling__metrics dd {
+  margin: 4px 0 0;
+  color: var(--color-text-tertiary);
+  font: 700 13px var(--font-mono);
+}
+
+.pt-short-selling__status {
+  margin: 8px 2px 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .connection-strip {
   z-index: 20;
   grid-area: status;
