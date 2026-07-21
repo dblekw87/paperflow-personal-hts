@@ -1546,30 +1546,58 @@ export class DesktopRuntime {
       const toDate = previousKoreanBusinessDate();
       const master = (await this.#instrumentMaster.search(symbol, 1)).items[0];
       const market = master?.market === "KOSDAQ" ? "KOSDAQ" : "KOSPI";
-      const trade = await new KrxShortSellingClient().getTradeByStock({
-        symbol,
-        market,
-        fromDate: koreanDateOffset(toDate, -32),
-        toDate,
-      });
+      const client = new KrxShortSellingClient();
+      const [tradeResult, balanceResult] = await Promise.allSettled([
+        client.getTradeByStock({
+          symbol,
+          market,
+          fromDate: koreanDateOffset(toDate, -32),
+          toDate,
+        }),
+        master?.standardCode !== undefined && /^KR[0-9A-Z]{10}$/.test(master.standardCode)
+          ? client.getBalanceByStock({
+              symbol,
+              isin: master.standardCode,
+              name: master.name,
+              market,
+              fromDate: koreanDateOffset(toDate, -32),
+              toDate,
+            })
+          : Promise.reject(new Error("KRX_SHORT_BALANCE_ISIN_MISSING")),
+      ]);
+      const trade = tradeResult.status === "fulfilled" ? tradeResult.value : null;
+      const balance = balanceResult.status === "fulfilled" ? balanceResult.value : null;
+      if (trade === null && balance === null) {
+        const reason = tradeResult.status === "rejected"
+          ? safeStatusMessage(tradeResult.reason)
+          : "KRX 공매도 거래 CSV에 선택 종목이 없습니다.";
+        throw new Error(reason);
+      }
       return {
         schemaVersion: 1,
-        state: "PARTIAL",
+        state: trade !== null && balance !== null ? "READY" : "PARTIAL",
         source: "KRX_DATA_PRODUCT",
         instrumentId: `KRX:${symbol}`,
         symbol,
         marketScope: "KR",
-        fetchedAt: trade.fetchedAt,
-        trade: {
+        fetchedAt: trade?.fetchedAt ?? balance?.fetchedAt ?? null,
+        trade: trade === null ? null : {
           businessDate: calendarDate(trade.businessDate),
           shortSellVolume: trade.shortSellVolume,
           shortSellTurnover: trade.shortSellTurnover,
           shortSellRatio: trade.shortSellRatio,
         },
-        balance: null,
+        balance: balance === null ? null : {
+          businessDate: calendarDate(balance.businessDate),
+          shortBalanceQuantity: balance.shortBalanceQuantity,
+          shortBalanceTurnover: balance.shortBalanceTurnover,
+          shortBalanceRatio: balance.shortBalanceRatio,
+        },
         lendingBalance: null,
         statusMessage:
-          "KRX 통계 CSV 종목별 공매도 거래 수신 · 공매도 잔고와 대차잔고는 전용 payload 확인 후 연결됩니다.",
+          balance === null
+            ? "KRX 통계 CSV 종목별 공매도 거래 수신 · 공매도 순보유잔고는 미수신, 대차잔고는 전용 payload 확인 후 연결됩니다."
+            : "KRX 통계 CSV 종목별 공매도 거래·순보유잔고 수신 · 대차잔고는 전용 payload 확인 후 연결됩니다.",
       };
     } catch (error) {
       return {

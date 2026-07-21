@@ -22,7 +22,12 @@ describe("ShortSellingPanel safety", () => {
           shortSellTurnover: "319606",
           shortSellRatio: "6.12",
         },
-        balance: null,
+        balance: {
+          businessDate: "2026-07-21",
+          shortBalanceQuantity: "100000",
+          shortBalanceTurnover: "25900000",
+          shortBalanceRatio: "0.02",
+        },
         lendingBalance: null,
         statusMessage: "KRX 공매도 거래 수신",
       }),
@@ -49,6 +54,7 @@ describe("ShortSellingPanel safety", () => {
     expect(component).toContain("KRX CSV");
     expect(component).toContain("shortSellTurnover");
     expect(component).toContain("shortSellRatio");
+    expect(component).toContain("shortBalanceTurnover");
     expect(component).toContain("공매도 주문 금지는 유지");
     expect(component).not.toMatch(/SYNTHETIC_UI_FIXTURE|mockShort|shortRatio:|shortBalance:/i);
   });

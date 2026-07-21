@@ -40,6 +40,7 @@ export function ShortSellingPanel({
   onRefresh,
 }: ShortSellingPanelProps) {
   const trade = projection?.instrumentId === instrumentId ? projection.trade : null;
+  const balance = projection?.instrumentId === instrumentId ? projection.balance : null;
   const loading = projection?.state === "LOADING";
   return (
     <section
@@ -78,7 +79,7 @@ export function ShortSellingPanel({
         </div>
         <div>
           <dt>공매도 잔고</dt>
-          <dd>미제공</dd>
+          <dd>{metric(balance?.shortBalanceTurnover ?? null, "원")}</dd>
         </div>
         <div>
           <dt>대차잔고</dt>
