@@ -65,6 +65,13 @@ import { isSearchableDomesticInstrumentQuery } from "../../shared/desktop-contra
 import { valuePaperPosition } from "../../shared/paper-valuation.js";
 
 type ThemePreference = "system" | "dark" | "light";
+type WatchlistQuoteSnapshot = {
+  readonly price: string;
+  readonly changeRate: string;
+  readonly direction: "positive" | "negative" | "flat";
+  readonly turnover: string;
+  readonly freshness: "live" | "stale";
+};
 type WorkspacePage =
   | "DASHBOARD"
   | "RANKINGS"
@@ -94,6 +101,30 @@ const INTRADAY_CHART_INTERVALS: readonly ChartInterval[] = [
   "60m",
   "4h",
 ];
+
+function playPaperOrderChime(): void {
+  const AudioContextConstructor =
+    window.AudioContext ??
+    (window as typeof window & { webkitAudioContext?: typeof AudioContext })
+      .webkitAudioContext;
+  if (!AudioContextConstructor) return;
+  const context = new AudioContextConstructor();
+  const start = context.currentTime;
+  const gain = context.createGain();
+  gain.gain.setValueAtTime(0.0001, start);
+  gain.gain.exponentialRampToValueAtTime(0.12, start + 0.015);
+  gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.42);
+  gain.connect(context.destination);
+  for (const [frequency, delay] of [[880, 0], [1174.66, 0.15]] as const) {
+    const oscillator = context.createOscillator();
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(frequency, start + delay);
+    oscillator.connect(gain);
+    oscillator.start(start + delay);
+    oscillator.stop(start + delay + 0.24);
+  }
+  window.setTimeout(() => void context.close(), 700);
+}
 
 const instruments = [
   {
@@ -486,6 +517,9 @@ export function App() {
       ? readLocalWatchlist(localStorage.getItem(LOCAL_WATCHLIST_KEY))
       : [],
   );
+  const [watchlistQuotes, setWatchlistQuotes] = useState<
+    ReadonlyMap<string, WatchlistQuoteSnapshot>
+  >(() => new Map());
   const [selectedMarket, setSelectedMarket] = useState("국내");
   const [workspacePage, setWorkspacePage] =
     useState<WorkspacePage>("DASHBOARD");
@@ -759,6 +793,33 @@ export function App() {
         ? "flat"
         : marketDirection(displayChangeRate)
       : marketDirection(displayChangeRate);
+  useEffect(() => {
+    if (!hasDesktopRuntime || !desktop.market?.price) return;
+    const instrumentId = desktop.market.instrumentId;
+    setWatchlistQuotes((current) => {
+      const next = new Map(current);
+      next.set(instrumentId, {
+        price: displayPrice,
+        changeRate: displayChangeRate,
+        direction: displayDirection,
+        turnover: formatKrwTurnoverEok(
+          desktop.market?.cumulativeTurnover ?? null,
+          "—",
+        ),
+        freshness: isKisLive ? "live" : "stale",
+      });
+      return next;
+    });
+  }, [
+    desktop.market?.cumulativeTurnover,
+    desktop.market?.instrumentId,
+    desktop.market?.price,
+    displayChangeRate,
+    displayDirection,
+    displayPrice,
+    hasDesktopRuntime,
+    isKisLive,
+  ]);
   const chartCurrentPrice =
     desktop.market?.price ?? (hasDesktopRuntime ? null : "84700");
   const chartPreviousClosePrice = (() => {
@@ -1017,23 +1078,30 @@ export function App() {
   const sidebarInstruments = hasDesktopRuntime
     ? watchlist.map((item) => {
         const active = item.instrumentId === activeInstrumentId;
+        const snapshot = watchlistQuotes.get(item.instrumentId);
         return {
           instrumentId: item.instrumentId,
           symbol: item.symbol,
           name: item.name,
           market: item.market ?? "KRX",
-          price: active ? displayPrice : "—",
-          changeRate: active ? displayChangeRate : "—",
-          direction: active ? displayDirection : ("flat" as const),
+          price: active ? displayPrice : (snapshot?.price ?? "—"),
+          changeRate: active
+            ? displayChangeRate
+            : (snapshot?.changeRate ?? "—"),
+          direction: active
+            ? displayDirection
+            : (snapshot?.direction ?? ("flat" as const)),
           turnover: active
             ? formatKrwTurnoverEok(
                 desktop.market?.cumulativeTurnover ?? null,
                 "—",
               )
-            : "—",
+            : (snapshot?.turnover ?? "—"),
           selected: active,
           freshness:
-            active && isKisLive ? ("live" as const) : ("stale" as const),
+            active && isKisLive
+              ? ("live" as const)
+              : (snapshot?.freshness ?? ("stale" as const)),
         };
       })
     : instruments;
@@ -1095,6 +1163,7 @@ export function App() {
           orderDraft.orderType === "LIMIT" ? orderPrice.toString() : null,
       });
       if (result?.accepted) {
+        playPaperOrderChime();
         const statusLabel =
           result.status === "FILLED"
             ? "전량 체결"
