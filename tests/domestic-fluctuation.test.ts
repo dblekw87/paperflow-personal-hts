@@ -57,6 +57,7 @@ describe("KisDomesticFluctuationClient", () => {
         );
         expect(url.searchParams.get("fid_cond_scr_div_code")).toBe("20170");
         expect(url.searchParams.get("fid_input_iscd")).toBe("0000");
+        expect(url.searchParams.get("fid_rank_sort_cls_code")).toBe("0000");
         expect(url.searchParams.get("fid_input_cnt_1")).toBe("30");
         expect(new Headers(init?.headers).get("tr_id")).toBe(
           "FHPST01700000",

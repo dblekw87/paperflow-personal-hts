@@ -42,6 +42,10 @@ import {
   type DomesticSecurityType,
 } from "../features/orderbook/reference-price-ladder.js";
 import {
+  ObservedTradeTapeAccumulator,
+  type ObservedTradeTapeItem,
+} from "../features/orderbook/observed-trade-tape.js";
+import {
   LOCAL_WATCHLIST_KEY,
   readLocalWatchlist,
   type LocalWatchlistItem,
@@ -371,6 +375,22 @@ function marketDirection(
       : "positive";
 }
 
+function orderBookLevelChange(
+  priceValue: string,
+  previousCloseValue: string | null,
+): { changeRate: string; direction: "positive" | "negative" | "flat" } {
+  const price = Number(priceValue);
+  const previousClose = Number(previousCloseValue);
+  if (!Number.isFinite(price) || !Number.isFinite(previousClose) || previousClose <= 0) {
+    return { changeRate: "—", direction: "flat" };
+  }
+  const rate = ((price - previousClose) / previousClose) * 100;
+  return {
+    changeRate: Math.abs(rate).toFixed(2),
+    direction: rate > 0 ? "positive" : rate < 0 ? "negative" : "flat",
+  };
+}
+
 function domesticInstrumentName(symbol: string): string {
   const names: Readonly<Record<string, string>> = {
     "005930": "삼성전자",
@@ -456,6 +476,10 @@ export function App() {
   const [liveChartCandles, setLiveChartCandles] = useState<
     readonly MarketCandleViewModel[]
   >([]);
+  const tradeTapeAccumulator = useRef(new ObservedTradeTapeAccumulator());
+  const [observedTrades, setObservedTrades] = useState<
+    readonly ObservedTradeTapeItem[]
+  >([]);
   const [watchlist, setWatchlist] = useState<readonly LocalWatchlistItem[]>(() =>
     hasDesktopRuntime
       ? readLocalWatchlist(localStorage.getItem(LOCAL_WATCHLIST_KEY))
@@ -495,6 +519,28 @@ export function App() {
 
   const effectiveTheme =
     themePreference === "system" ? systemTheme : themePreference;
+
+  useEffect(() => {
+    const market = desktop.market;
+    if (!market) return;
+    const observed = tradeTapeAccumulator.current.observe({
+      instrumentId: market.instrumentId,
+      occurredAt: market.tradeOccurredAt,
+      price: market.price,
+      cumulativeVolume: market.cumulativeVolume,
+    });
+    if (observed === null) return;
+    setObservedTrades((current) => [
+      observed,
+      ...current.filter((item) => item.id !== observed.id),
+    ].slice(0, 80));
+  }, [
+    desktop.market?.cumulativeVolume,
+    desktop.market?.instrumentId,
+    desktop.market?.price,
+    desktop.market?.sequence,
+    desktop.market?.tradeOccurredAt,
+  ]);
 
   useEffect(() => {
     if (!hasDesktopRuntime) return;
@@ -785,15 +831,14 @@ export function App() {
         ? desktop.market.asks.slice(0, 10).reverse().map((level, index) => ({
             price: formatWholeNumber(level.price, level.price),
             quantity: formatWholeNumber(level.quantity, level.quantity),
-            changeRate: displayChangeRate.replace(/^[+-]/, ""),
-            direction: displayDirection,
+            ...orderBookLevelChange(level.price, chartPreviousClosePrice),
             depthBand: (Math.min(10, index + 1) || 1) as
               1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10,
           }))
         : hasDesktopRuntime
           ? referencePriceLadder.asks
           : asks,
-    [desktop.market, displayChangeRate, displayDirection, hasDesktopRuntime, referencePriceLadder.asks],
+    [desktop.market, chartPreviousClosePrice, hasDesktopRuntime, referencePriceLadder.asks],
   );
   const displayedBids = useMemo(
     () =>
@@ -801,15 +846,14 @@ export function App() {
         ? desktop.market.bids.slice(0, 10).map((level, index) => ({
             price: formatWholeNumber(level.price, level.price),
             quantity: formatWholeNumber(level.quantity, level.quantity),
-            changeRate: displayChangeRate.replace(/^[+-]/, ""),
-            direction: displayDirection,
+            ...orderBookLevelChange(level.price, chartPreviousClosePrice),
             depthBand: (Math.min(10, index + 1) || 1) as
               1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10,
           }))
         : hasDesktopRuntime
           ? referencePriceLadder.bids
           : bids,
-    [desktop.market, displayChangeRate, displayDirection, hasDesktopRuntime, referencePriceLadder.bids],
+    [desktop.market, chartPreviousClosePrice, hasDesktopRuntime, referencePriceLadder.bids],
   );
   const hasKisHistory =
     desktop.chart?.state === "READY" &&
@@ -871,6 +915,57 @@ export function App() {
     liveChartCandles.length > 0
       ? liveChartCandles
       : baseChartCandles;
+  const orderBookReferenceStats = useMemo(() => {
+    const canDerive52WeekRange =
+      desktop.chart?.interval === "1d" &&
+      (desktop.chart.range === "1Y" || desktop.chart.range === "5Y");
+    const newestDailyTime = canDerive52WeekRange
+      ? Math.max(...displayedCandles.map((candle) => Date.parse(candle.openedAt)))
+      : Number.NaN;
+    const trailingYearCandles = canDerive52WeekRange
+      ? displayedCandles.filter(
+          (candle) =>
+            Date.parse(candle.openedAt) >= newestDailyTime - 366 * 24 * 60 * 60 * 1_000,
+        )
+      : [];
+    const numericHighs = trailingYearCandles
+      .map((candle) => Number(candle.high))
+      .filter((value) => Number.isFinite(value) && value > 0);
+    const numericLows = trailingYearCandles
+      .map((candle) => Number(candle.low))
+      .filter((value) => Number.isFinite(value) && value > 0);
+    const bestAsk = Number(desktop.market?.asks[0]?.price);
+    const bestBid = Number(desktop.market?.bids[0]?.price);
+    const midpoint =
+      Number.isFinite(bestAsk) && Number.isFinite(bestBid)
+        ? String(Math.round((bestAsk + bestBid) / 2))
+        : null;
+    const priceStat = (label: string, value: string | null, dividerBefore = false) => ({
+      label,
+      value: formatWholeNumber(value, "—"),
+      direction: orderBookLevelChange(value ?? "", chartPreviousClosePrice).direction,
+      dividerBefore,
+    });
+    return [
+      priceStat("52주 최고", numericHighs.length ? String(Math.max(...numericHighs)) : null),
+      priceStat("52주 최저", numericLows.length ? String(Math.min(...numericLows)) : null),
+      { label: "상한가", value: "—", direction: "flat" as const, dividerBefore: true },
+      { label: "하한가", value: "—", direction: "flat" as const },
+      { label: "상승VI", value: "—", direction: "flat" as const },
+      { label: "하강VI", value: "—", direction: "flat" as const },
+      priceStat("시가", desktop.market?.openPrice ?? null, true),
+      priceStat("고가", desktop.market?.highPrice ?? null),
+      priceStat("저가", desktop.market?.lowPrice ?? null),
+      {
+        label: "거래량",
+        value: formatWholeNumber(desktop.market?.cumulativeVolume ?? null, "—"),
+        direction: "flat" as const,
+        dividerBefore: true,
+      },
+      { label: "어제보다", value: "—", direction: "flat" as const },
+      priceStat("중간호가", midpoint, true),
+    ];
+  }, [chartPreviousClosePrice, desktop.market, displayedCandles]);
   const activePosition = desktop.account?.positions.find(
     (position) => position.instrumentId === activeInstrumentId,
   );
@@ -999,9 +1094,15 @@ export function App() {
           orderDraft.orderType === "LIMIT" ? orderPrice.toString() : null,
       });
       if (result?.accepted) {
-        setNotice(
-          `${orderDraft.side === "BUY" ? "매수" : "매도"} 주문이 ${result.status} 상태로 로컬 SQLite에 저장됐습니다.`,
-        );
+        const statusLabel =
+          result.status === "FILLED"
+            ? "전량 체결"
+            : result.status === "PARTIALLY_FILLED"
+              ? "부분 체결"
+              : result.status === "RESTING"
+                ? "미체결 대기"
+                : result.status;
+        setNotice(`${orderDraft.side === "BUY" ? "매수" : "매도"} 주문 · ${statusLabel} · 로컬 SQLite 저장 완료${result.status === "RESTING" ? " (체결 전에는 보유수량·평가손익이 변하지 않습니다)" : ""}`);
       } else {
         setNotice(
           `모의주문 거절 · ${result?.rejectionCode ?? "LOCAL_RUNTIME_ERROR"}`,
@@ -1550,6 +1651,18 @@ export function App() {
             currentPrice={displayPrice}
             currentPriceLabel={isClosedMarket ? "마지막 종가" : "현재가"}
             executionStrength={desktop.market?.executionStrength ?? null}
+            recentTrades={observedTrades
+              .filter((trade) => trade.instrumentId === activeInstrumentId)
+              .slice(0, 8)
+              .map((trade) => ({
+                ...trade,
+                price: formatWholeNumber(trade.price, trade.price),
+                quantity:
+                  trade.quantity === null
+                    ? null
+                    : formatWholeNumber(trade.quantity, trade.quantity),
+              }))}
+            referenceStats={orderBookReferenceStats}
             currentDirection={displayDirection}
             freshness={
               isKisLive
@@ -1758,7 +1871,9 @@ export function App() {
                           <th>현재가 / 장마감 종가</th>
                           <th>등락률</th>
                           <th>당일 거래량 (현재까지)</th>
-                          <th>전일 전체 대비</th>
+                          <th title="오늘 현재까지 누적 거래량을 직전 거래일 하루 전체 거래량과 비교합니다.">
+                            전일 총거래량 대비(장중)
+                          </th>
                           <th>당일 거래대금 (현재까지)</th>
                         </tr>
                       </thead>

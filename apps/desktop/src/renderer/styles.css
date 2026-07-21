@@ -1010,6 +1010,7 @@ select:focus-visible {
 .pt-order-book__table {
   width: 100%;
   border-collapse: collapse;
+  table-layout: fixed;
   font: 13px var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
@@ -1035,12 +1036,47 @@ select:focus-visible {
 
 .pt-order-book__quantity {
   position: relative;
+  width: 132px;
+  overflow: hidden;
+}
+
+.pt-order-book__quantity > span {
+  position: absolute;
+  inset-block: 2px;
+  width: var(--depth-percent);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.pt-order-book__quantity > strong {
+  position: relative;
+  z-index: 1;
+  font-weight: 600;
+}
+
+.pt-order-book__quantity--ask { color: #66adff; }
+.pt-order-book__quantity--ask > span {
+  right: 0;
+  background: color-mix(in srgb, var(--color-negative) 27%, transparent);
+}
+
+.pt-order-book__quantity--bid { color: #ff6679; }
+.pt-order-book__quantity--bid > span {
+  left: 0;
+  background: color-mix(in srgb, var(--color-positive) 25%, transparent);
 }
 
 .pt-order-book__price {
-  padding-right: 8px !important;
-  text-align: right;
+  width: 148px;
+  padding-inline: 7px !important;
+  text-align: center !important;
+  white-space: nowrap;
 }
+
+.pt-order-book__rate { margin-left: 4px; font-size: 10px; }
+.pt-order-book__rate.positive { color: var(--color-positive); }
+.pt-order-book__rate.negative { color: var(--color-negative); }
+.pt-order-book__rate.flat { color: var(--color-text-tertiary); }
 
 .pt-order-book__row {
   cursor: default;
@@ -1055,24 +1091,77 @@ select:focus-visible {
 }
 
 .pt-order-book__row--ask {
-  background: color-mix(in srgb, var(--color-positive) 8%, transparent);
-  box-shadow: inset 3px 0 color-mix(in srgb, var(--color-positive) 42%, transparent);
+  background: color-mix(in srgb, var(--color-negative) 3%, transparent);
 }
 
 .pt-order-book__row--bid {
-  background: color-mix(in srgb, var(--color-negative) 8%, transparent);
-  box-shadow: inset 3px 0 color-mix(in srgb, var(--color-negative) 42%, transparent);
+  background: color-mix(in srgb, var(--color-positive) 3%, transparent);
 }
 
 .pt-order-book__row--ask:not([aria-disabled="true"]):hover,
 .pt-order-book__row--ask:focus-within {
-  background: color-mix(in srgb, var(--color-positive) 14%, transparent);
+  background: color-mix(in srgb, var(--color-negative) 8%, transparent);
 }
 
 .pt-order-book__row--bid:not([aria-disabled="true"]):hover,
 .pt-order-book__row--bid:focus-within {
-  background: color-mix(in srgb, var(--color-negative) 14%, transparent);
+  background: color-mix(in srgb, var(--color-positive) 8%, transparent);
 }
+
+.pt-order-book__stats-cell,
+.pt-order-book__tape-cell {
+  width: 132px;
+  padding: 0 !important;
+  vertical-align: top;
+  background: var(--color-bg-canvas);
+}
+
+.pt-order-book__reference-stats { margin: 0; padding: 5px 8px; }
+.pt-order-book__reference-stats div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 21px;
+  align-items: center;
+}
+.pt-order-book__reference-stats div.has-divider {
+  margin-top: 3px;
+  padding-top: 4px;
+  border-top: 1px solid var(--color-border);
+}
+.pt-order-book__reference-stats dt { color: var(--color-text-tertiary); font-size: 10px; }
+.pt-order-book__reference-stats dd { margin: 0; color: var(--color-text-secondary); font-size: 10px; }
+.pt-order-book__reference-stats dd.positive { color: var(--color-positive); }
+.pt-order-book__reference-stats dd.negative { color: var(--color-negative); }
+
+.pt-order-book__trade-tape { padding: 5px 7px; }
+.pt-order-book__trade-strength,
+.pt-order-book__trade-head,
+.pt-order-book__trade-tape li {
+  display: grid;
+  grid-template-columns: 48px minmax(62px, 1fr) 42px;
+  align-items: center;
+  gap: 4px;
+}
+.pt-order-book__trade-strength {
+  display: flex;
+  justify-content: space-between;
+  min-height: 25px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+}
+.pt-order-book__trade-strength strong.positive,
+.pt-order-book__trade-tape li.positive strong { color: var(--color-positive); }
+.pt-order-book__trade-strength strong.negative,
+.pt-order-book__trade-tape li.negative strong { color: var(--color-negative); }
+.pt-order-book__trade-head { min-height: 20px; color: var(--color-text-tertiary); font-size: 9px; }
+.pt-order-book__trade-head span:not(:first-child) { text-align: right; }
+.pt-order-book__trade-tape ol { margin: 0; padding: 0; list-style: none; }
+.pt-order-book__trade-tape li { min-height: 22px; border-bottom: 1px solid var(--color-border-soft); font-size: 10px; }
+.pt-order-book__trade-tape li time { color: var(--color-text-tertiary); font-size: 9px; }
+.pt-order-book__trade-tape li strong,
+.pt-order-book__trade-tape li span { text-align: right; }
+.pt-order-book__trade-empty { display: block !important; padding-top: 8px; color: var(--color-text-tertiary); text-align: center; }
 
 .pt-order-book__action-cell {
   width: 48px;

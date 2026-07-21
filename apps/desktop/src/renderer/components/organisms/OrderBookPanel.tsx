@@ -1,3 +1,5 @@
+import type { CSSProperties } from "react";
+
 import { Badge, PriceText } from "../atoms";
 import type { PriceDirection } from "../atoms";
 import { Status } from "../molecules";
@@ -10,6 +12,21 @@ export interface OrderBookLevelModel {
   depthBand: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
 }
 
+export interface RecentTradeModel {
+  readonly id: string;
+  readonly occurredAt: string;
+  readonly price: string;
+  readonly quantity: string | null;
+  readonly direction: PriceDirection;
+}
+
+export interface OrderBookReferenceStat {
+  readonly label: string;
+  readonly value: string;
+  readonly direction?: PriceDirection;
+  readonly dividerBefore?: boolean;
+}
+
 export interface OrderBookPanelProps {
   instrumentId: string;
   asks: readonly OrderBookLevelModel[];
@@ -19,6 +36,8 @@ export interface OrderBookPanelProps {
   currentPrice: string;
   currentPriceLabel?: string;
   executionStrength: string | null;
+  recentTrades: readonly RecentTradeModel[];
+  referenceStats: readonly OrderBookReferenceStat[];
   currentDirection: PriceDirection;
   freshness: "live" | "delayed" | "stale" | "offline" | "closed" | "partial";
   dataMode?: "REAL" | "FIXTURE";
@@ -38,6 +57,98 @@ interface LevelRowsProps {
   canOrder: boolean;
   disabledReason: string;
   onLevelOrder: OrderBookPanelProps["onLevelOrder"];
+  executionStrength: string | null;
+  recentTrades: readonly RecentTradeModel[];
+  referenceStats: readonly OrderBookReferenceStat[];
+}
+
+function quantityNumber(value: string): number {
+  const parsed = Number(value.replaceAll(",", ""));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function depthStyle(
+  levels: readonly OrderBookLevelModel[],
+  quantity: string,
+): CSSProperties {
+  const maximum = Math.max(0, ...levels.map((level) => quantityNumber(level.quantity)));
+  const current = quantityNumber(quantity);
+  return {
+    "--depth-percent": `${maximum > 0 ? Math.max(3, (current / maximum) * 100) : 0}%`,
+  } as CSSProperties;
+}
+
+function ReferenceStats({ stats }: { stats: readonly OrderBookReferenceStat[] }) {
+  return (
+    <dl className="pt-order-book__reference-stats">
+      {stats.map((stat) => (
+        <div
+          key={stat.label}
+          className={stat.dividerBefore ? "has-divider" : undefined}
+        >
+          <dt>{stat.label}</dt>
+          <dd className={stat.direction ?? "flat"}>{stat.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function formatTradeTime(value: string): string {
+  if (!Number.isFinite(Date.parse(value))) return "—";
+  return new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(new Date(value));
+}
+
+function TradeTape({
+  executionStrength,
+  recentTrades,
+}: Pick<LevelRowsProps, "executionStrength" | "recentTrades">) {
+  return (
+    <div className="pt-order-book__trade-tape">
+      <div className="pt-order-book__trade-strength">
+        <span>체결강도</span>
+        <strong
+          className={
+            executionStrength === null
+              ? "flat"
+              : Number(executionStrength) >= 100
+                ? "positive"
+                : "negative"
+          }
+        >
+          {executionStrength === null ? "—" : `${executionStrength}%`}
+        </strong>
+      </div>
+      <div className="pt-order-book__trade-head">
+        <span>시간</span>
+        <span>체결가</span>
+        <span>체결량</span>
+      </div>
+      <ol>
+        {recentTrades.length > 0 ? (
+          recentTrades.slice(0, 8).map((trade) => (
+            <li key={trade.id} className={trade.direction}>
+              <time dateTime={trade.occurredAt}>
+                {formatTradeTime(trade.occurredAt)}
+              </time>
+              <strong>{trade.price}</strong>
+              <span>{trade.quantity ?? "—"}</span>
+            </li>
+          ))
+        ) : (
+          <li className="flat pt-order-book__trade-empty">
+            실제 체결 수신 대기
+          </li>
+        )}
+      </ol>
+    </div>
+  );
 }
 
 function LevelRows({
@@ -46,6 +157,9 @@ function LevelRows({
   canOrder,
   disabledReason,
   onLevelOrder,
+  executionStrength,
+  recentTrades,
+  referenceStats,
 }: LevelRowsProps) {
   return levels.map((level, index) => (
     <tr
@@ -57,28 +171,53 @@ function LevelRows({
         <button
           type="button"
           disabled={!canOrder}
-          title={canOrder ? `${level.price}원에 매도` : disabledReason}
+          title={canOrder ? `${level.price}원에 매도 · ${side === "BID" ? "즉시체결 예상" : "체결 대기 예상"}` : disabledReason}
           aria-label={`${level.price}원 입력 수량 매도`}
           onClick={() => onLevelOrder("SELL", level.price)}
         />
       </td>
-      <td className="pt-order-book__level">{index + 1}</td>
-      <td className="pt-order-book__quantity">{level.quantity}</td>
+      {side === "ASK" ? (
+        <td
+          className="pt-order-book__quantity pt-order-book__quantity--ask"
+          style={depthStyle(levels, level.quantity)}
+        >
+          <span aria-hidden="true" />
+          <strong>{level.quantity}</strong>
+        </td>
+      ) : index === 0 ? (
+        <td className="pt-order-book__tape-cell" rowSpan={levels.length}>
+          <TradeTape
+            executionStrength={executionStrength}
+            recentTrades={recentTrades}
+          />
+        </td>
+      ) : null}
       <td className="pt-order-book__price">
-        <PriceText value={level.price} direction={level.direction} />
+        <PriceText value={level.price} direction={level.direction} />{" "}
+        <span className={`pt-order-book__rate ${level.direction}`}>
+          ({level.changeRate === "—" ? "—" : `${level.changeRate}%`})
+        </span>
       </td>
-      <td className="pt-order-book__change">
-        <PriceText
-          value={level.changeRate}
-          direction={level.direction}
-          suffix="%"
-        />
-      </td>
+      {side === "ASK" ? (
+        index === 0 ? (
+          <td className="pt-order-book__stats-cell" rowSpan={levels.length}>
+            <ReferenceStats stats={referenceStats} />
+          </td>
+        ) : null
+      ) : (
+        <td
+          className="pt-order-book__quantity pt-order-book__quantity--bid"
+          style={depthStyle(levels, level.quantity)}
+        >
+          <span aria-hidden="true" />
+          <strong>{level.quantity}</strong>
+        </td>
+      )}
       <td className="pt-order-book__action-cell pt-order-book__action-cell--buy">
         <button
           type="button"
           disabled={!canOrder}
-          title={canOrder ? `${level.price}원에 매수` : disabledReason}
+          title={canOrder ? `${level.price}원에 매수 · ${side === "ASK" ? "즉시체결 예상" : "체결 대기 예상"}` : disabledReason}
           aria-label={`${level.price}원 입력 수량 매수`}
           onClick={() => onLevelOrder("BUY", level.price)}
         />
@@ -96,6 +235,8 @@ export function OrderBookPanel({
   currentPrice,
   currentPriceLabel = "현재가",
   executionStrength,
+  recentTrades,
+  referenceStats,
   currentDirection,
   freshness,
   dataMode = "REAL",
@@ -150,20 +291,6 @@ export function OrderBookPanel({
             emphasis="strong"
           />
         </span>
-        <span className="pt-order-book__strength">
-          <span>체결강도</span>
-          <strong
-            className={
-              executionStrength === null
-                ? "flat"
-                : Number(executionStrength) >= 100
-                  ? "positive"
-                  : "negative"
-            }
-          >
-            {executionStrength === null ? "—" : `${executionStrength}%`}
-          </strong>
-        </span>
         <label className="pt-order-book__direct-quantity">
           <span>수량</span>
           <input
@@ -194,10 +321,9 @@ export function OrderBookPanel({
             <thead>
               <tr>
                 <th scope="col">매도</th>
-                <th scope="col">단계</th>
-                <th scope="col">잔량</th>
-                <th scope="col">가격</th>
-                <th scope="col">등락률</th>
+                <th scope="col">매도 잔량·체결</th>
+                <th scope="col">가격 (등락률)</th>
+                <th scope="col">매수 잔량</th>
                 <th scope="col">매수</th>
               </tr>
             </thead>
@@ -208,6 +334,9 @@ export function OrderBookPanel({
                 canOrder={canOrderFromLevel}
                 disabledReason={levelOrderDisabledReason}
                 onLevelOrder={onLevelOrder}
+                executionStrength={executionStrength}
+                recentTrades={recentTrades}
+                referenceStats={referenceStats}
               />
               <LevelRows
                 levels={bids}
@@ -215,14 +344,18 @@ export function OrderBookPanel({
                 canOrder={canOrderFromLevel}
                 disabledReason={levelOrderDisabledReason}
                 onLevelOrder={onLevelOrder}
+                executionStrength={executionStrength}
+                recentTrades={recentTrades}
+                referenceStats={referenceStats}
               />
             </tbody>
             <tfoot>
-              <tr>
-                <th scope="row" colSpan={3}>
+              <tr className="pt-order-book__totals">
+                <th scope="row" colSpan={2}>
                   매도잔량 {totalAskQuantity}
                 </th>
-                <td colSpan={3}>매수잔량 {totalBidQuantity}</td>
+                <td />
+                <td colSpan={2}>매수잔량 {totalBidQuantity}</td>
               </tr>
             </tfoot>
           </table>

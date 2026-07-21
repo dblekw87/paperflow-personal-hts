@@ -115,7 +115,10 @@ export class KisDomesticFluctuationClient {
       fid_cond_mrkt_div_code: "J",
       fid_cond_scr_div_code: "20170",
       fid_input_iscd: "0000",
-      fid_rank_sort_cls_code: "0",
+      // KIS documents this screen as a four-character ranking selector.
+      // "0000" is the canonical gainers order; the shortened "0" can be
+      // interpreted inconsistently by the gateway.
+      fid_rank_sort_cls_code: "0000",
       fid_input_cnt_1: "30",
       fid_prc_cls_code: "0",
       fid_input_price_1: "",
