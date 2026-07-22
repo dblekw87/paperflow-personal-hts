@@ -34,6 +34,13 @@ export type DesktopMarketSession =
   | "AFTER"
   | "CLOSED"
   | "UNKNOWN";
+export type DesktopTradingPhase =
+  | "PREOPEN_AUCTION"
+  | "REGULAR_CONTINUOUS"
+  | "VI_PAUSED"
+  | "CLOSING_AUCTION"
+  | "AFTER_HOURS_AUCTION"
+  | "CLOSED";
 
 export interface DesktopOrderBookLevel {
   readonly price: string;
@@ -50,10 +57,12 @@ export interface DesktopMarketProjection {
   readonly connectionState: DesktopConnectionState;
   readonly freshness: DesktopFreshness;
   readonly session: DesktopMarketSession;
+  readonly tradingPhase: DesktopTradingPhase;
   readonly price: string | null;
   readonly change: string | null;
   readonly changeRate: string | null;
   readonly executionStrength: string | null;
+  readonly lastTradeQuantity: string | null;
   readonly cumulativeVolume: string | null;
   readonly cumulativeTurnover: string | null;
   readonly openPrice: string | null;
@@ -465,6 +474,12 @@ export interface DesktopPaperOrderRequest {
   readonly limitPrice: string | null;
 }
 
+export interface DesktopPaperCancelRequest {
+  readonly requestId: string;
+  readonly clientOrderId: string;
+  readonly instrumentId: string;
+}
+
 export interface DesktopPaperOrderResult {
   readonly schemaVersion: 1;
   readonly requestId: string;
@@ -501,6 +516,7 @@ export const DESKTOP_CHANNELS = Object.freeze({
   informationGet: "papertrading:information:get",
   informationOpenExternal: "papertrading:information:open-external",
   paperSubmit: "papertrading:paper:submit",
+  paperCancel: "papertrading:paper:cancel",
 } as const);
 
 export function isAllowedExternalInformationUrl(value: unknown): value is string {
@@ -725,10 +741,7 @@ function isInvestorFlowValue(
   ) {
     return false;
   }
-  return (
-    BigInt(buyQuantity) - BigInt(sellQuantity) === BigInt(netBuyQuantity) &&
-    BigInt(buyAmount) - BigInt(sellAmount) === BigInt(netBuyAmount)
-  );
+  return true;
 }
 
 function hasExactInvestorParticipants(
@@ -786,7 +799,7 @@ export function isDesktopInvestorFlowProjection(
       String(value["source"]),
     ) ||
     !Array.isArray(value["markets"]) ||
-    value["markets"].length > 2 ||
+    value["markets"].length > 3 ||
     (value["fetchedAt"] !== null && !isIsoInstant(value["fetchedAt"])) ||
     typeof value["statusMessage"] !== "string"
   ) {

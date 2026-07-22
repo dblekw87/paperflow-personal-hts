@@ -7,6 +7,7 @@ import type {
   DesktopInstrumentSearchProjection,
   DesktopMarketCalendarProjection,
   DesktopMarketContextProjection,
+  DesktopPaperCancelRequest,
   DesktopPaperOrderRequest,
   DesktopPaperOrderResult,
   DesktopRankingProjection,
@@ -66,6 +67,11 @@ type WorkerCommand =
       readonly kind: "paper-submit";
       readonly request: unknown;
     }
+  | {
+      readonly id: string;
+      readonly kind: "paper-cancel";
+      readonly request: unknown;
+    }
   | { readonly id: string; readonly kind: "close" };
 
 type WorkerResult =
@@ -104,6 +110,7 @@ function isWorkerCommand(value: unknown): value is WorkerCommand {
       "market-context-get",
       "market-calendar-get",
       "paper-submit",
+      "paper-cancel",
       "close",
     ].includes(record["kind"])
   );
@@ -186,6 +193,11 @@ process.on("message", (value: unknown) => {
       case "paper-submit":
         result = runtime.submitPaperOrder(
           value.request as DesktopPaperOrderRequest,
+        );
+        break;
+      case "paper-cancel":
+        result = runtime.cancelPaperOrder(
+          value.request as DesktopPaperCancelRequest,
         );
         break;
       case "close":

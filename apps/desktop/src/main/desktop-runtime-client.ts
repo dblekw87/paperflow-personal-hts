@@ -253,7 +253,16 @@ export class DesktopRuntimeClient {
       30_000,
     );
     if (!isDesktopInvestorFlowProjection(projection)) {
-      throw new Error("Desktop worker returned an invalid investor-flow projection");
+      return {
+        schemaVersion: 1,
+        state: "ERROR",
+        source: "KIS_REST",
+        instrument: null,
+        markets: [],
+        fetchedAt: new Date().toISOString(),
+        statusMessage:
+          "투자자 수급 provider 응답이 desktop contract를 벗어나 표시하지 않았습니다.",
+      };
     }
     return projection;
   }
@@ -357,6 +366,13 @@ export class DesktopRuntimeClient {
   public submitPaperOrder(request: unknown): Promise<DesktopPaperOrderResult> {
     return this.#request<DesktopPaperOrderResult>({
       kind: "paper-submit",
+      request,
+    });
+  }
+
+  public cancelPaperOrder(request: unknown): Promise<DesktopPaperOrderResult> {
+    return this.#request<DesktopPaperOrderResult>({
+      kind: "paper-cancel",
       request,
     });
   }

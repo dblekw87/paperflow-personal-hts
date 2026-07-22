@@ -73,6 +73,34 @@ function formatInteger(value: string): string {
   return formatted;
 }
 
+function formatSignedCompactKrw(value: string): string {
+  const integer = BigInt(value);
+  const sign = integer > 0n ? "+" : integer < 0n ? "-" : "";
+  const absolute = integer < 0n ? -integer : integer;
+  const units = [
+    ["조", 1_0000_0000_0000n],
+    ["억", 1_0000_0000n],
+    ["만", 1_0000n],
+  ] as const;
+  for (const [suffix, divisor] of units) {
+    if (absolute >= divisor) {
+      const scaled = (absolute * 100n) / divisor;
+      const integerPart = scaled / 100n;
+      const fraction = scaled % 100n;
+      const fractionText =
+        fraction === 0n
+          ? ""
+          : `.${fraction.toString().padStart(2, "0").replace(/0+$/, "")}`;
+      return `${sign}${integerPart.toLocaleString("ko-KR")}${fractionText}${suffix}`;
+    }
+  }
+  return `${sign}${absolute.toLocaleString("ko-KR")}`;
+}
+
+function formatUnsignedCompactKrw(value: string): string {
+  return formatSignedCompactKrw(value.replace(/^\+/, ""));
+}
+
 function FlowValue({
   value,
   unit,
@@ -85,7 +113,8 @@ function FlowValue({
   }
   return (
     <span className={`pt-investor-flow__number ${signedDirection(value)}`}>
-      {formatInteger(value)} <small>{unit === "KRW" ? "원" : "주"}</small>
+      {unit === "KRW" ? formatSignedCompactKrw(value) : formatInteger(value)}{" "}
+      <small>{unit === "KRW" ? "원" : "주"}</small>
     </span>
   );
 }
@@ -129,10 +158,11 @@ function FlowTable({
                 <th scope="row">{participantLabel[participant]}</th>
                 <td>
                   {value ? (
-                    <span className="pt-investor-flow__number">
-                      {new Intl.NumberFormat("ko-KR").format(
-                        BigInt(value.sellAmount),
-                      )}{" "}
+                    <span
+                      className="pt-investor-flow__number"
+                      title={`${new Intl.NumberFormat("ko-KR").format(BigInt(value.sellAmount))}원`}
+                    >
+                      {formatUnsignedCompactKrw(value.sellAmount)}{" "}
                       <small>원</small>
                     </span>
                   ) : (
@@ -141,10 +171,11 @@ function FlowTable({
                 </td>
                 <td>
                   {value ? (
-                    <span className="pt-investor-flow__number">
-                      {new Intl.NumberFormat("ko-KR").format(
-                        BigInt(value.buyAmount),
-                      )}{" "}
+                    <span
+                      className="pt-investor-flow__number"
+                      title={`${new Intl.NumberFormat("ko-KR").format(BigInt(value.buyAmount))}원`}
+                    >
+                      {formatUnsignedCompactKrw(value.buyAmount)}{" "}
                       <small>원</small>
                     </span>
                   ) : (

@@ -60,6 +60,7 @@ export function applyLiveTradeToCandles(
   }
   if (!isSameKrxDate(lastOpenedAt, bounds.openedAtMs)) {
     return [
+      ...candles.map((candle) => ({ ...candle, forming: false })),
       {
         id: `${last.id}:live:${new Date(bounds.openedAtMs).toISOString()}`,
         openedAt: new Date(bounds.openedAtMs).toISOString(),
@@ -134,14 +135,22 @@ function intradayBucketBounds(
   if (minuteOfDay === 15 * 60 + 30 && seconds === 0) {
     minuteOfDay = 15 * 60 + 29;
   }
+  const nxtPreStart = 8 * 60;
+  const nxtPreEnd = 8 * 60 + 50;
   const regularStart = 9 * 60;
   const regularEnd = 15 * 60 + 20;
   const closingEnd = 15 * 60 + 30;
+  const nxtAfterStart = 15 * 60 + 40;
+  const nxtAfterEnd = 20 * 60;
   const session =
-    minuteOfDay >= regularStart && minuteOfDay < regularEnd
+    minuteOfDay >= nxtPreStart && minuteOfDay < nxtPreEnd
+      ? { start: nxtPreStart, end: nxtPreEnd }
+      : minuteOfDay >= regularStart && minuteOfDay < regularEnd
       ? { start: regularStart, end: regularEnd }
       : minuteOfDay >= regularEnd && minuteOfDay < closingEnd
         ? { start: regularEnd, end: closingEnd }
+        : minuteOfDay >= nxtAfterStart && minuteOfDay < nxtAfterEnd
+          ? { start: nxtAfterStart, end: nxtAfterEnd }
         : null;
   if (session === null) return null;
 

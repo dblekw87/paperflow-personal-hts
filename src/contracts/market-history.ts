@@ -217,7 +217,7 @@ export const AggregatedDomesticCandleHistorySchema = z
       dataEnvironment: z.enum(["paper", "prod"]),
       inputInterval: z.enum(["1m", "1d"]),
       fetchedAt: UtcInstantSchema,
-      bucketPolicy: z.literal("KRX_SESSION_ANCHORED_KST"),
+      bucketPolicy: z.literal("DOMESTIC_INTEGRATED_SESSION_ANCHORED_KST"),
       gapPolicy: z.literal("OBSERVED_CANDLES_ONLY"),
     }),
     quality: z.object({

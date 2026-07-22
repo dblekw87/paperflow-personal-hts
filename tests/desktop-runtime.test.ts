@@ -8,6 +8,7 @@ import {
   DesktopRuntime,
   isDesktopPaperMarketExecutable,
   resolveDesktopMarketSession,
+  resolveDesktopTradingPhase,
 } from "../apps/desktop/src/main/desktop-runtime.js";
 import { BLS_RELEASE_ICS_URL } from "../src/calendar/bls-release-calendar-client.js";
 import { BEA_RELEASE_SCHEDULE_URL } from "../src/calendar/bea-release-schedule-client.js";
@@ -245,6 +246,74 @@ function usLiveProjection(receivedAt: string): MarketLiveProjection {
   };
 }
 
+function nxtLiveProjection(receivedAt: string): MarketLiveProjection {
+  return {
+    ...liveProjection(receivedAt, "200", "1"),
+    instrumentId: "NXT:005930",
+    acknowledged: { orderBook: true, trade: true },
+    orderBook: {
+      instrumentId: "NXT:005930",
+      venue: "NXT",
+      bids: [{ price: "69800", quantity: "100" }],
+      asks: [{ price: "70200", quantity: "100" }],
+      totalBidQuantity: "100",
+      totalAskQuantity: "100",
+      occurredAt: receivedAt,
+      providerDate: providerDateFor(receivedAt),
+      providerTime: "080500",
+      source: "KIS_WS",
+    },
+    trade: {
+      instrumentId: "NXT:005930",
+      venue: "NXT",
+      session: "PRE",
+      price: "70000",
+      quantity: "1",
+      change: null,
+      changeRate: null,
+      cumulativeVolume: "200",
+      cumulativeTurnover: null,
+      occurredAt: receivedAt,
+      providerDate: providerDateFor(receivedAt),
+      providerTime: "080500",
+      source: "KIS_WS",
+    },
+  };
+}
+
+function afterHoursDomesticProjection(receivedAt: string): MarketLiveProjection {
+  return {
+    ...liveProjection(receivedAt, "300", "1"),
+    orderBook: {
+      instrumentId: "KRX:005930",
+      venue: "KRX",
+      bids: [{ price: "260500", quantity: "100" }],
+      asks: [{ price: "261000", quantity: "100" }],
+      totalBidQuantity: "100",
+      totalAskQuantity: "100",
+      occurredAt: receivedAt,
+      providerDate: providerDateFor(receivedAt),
+      providerTime: "171000",
+      source: "KIS_WS",
+    },
+    trade: {
+      instrumentId: "KRX:005930",
+      venue: "KRX",
+      session: "AFTER",
+      price: "260500",
+      quantity: "1",
+      change: null,
+      changeRate: null,
+      cumulativeVolume: "300",
+      cumulativeTurnover: null,
+      occurredAt: receivedAt,
+      providerDate: providerDateFor(receivedAt),
+      providerTime: "171000",
+      source: "KIS_WS",
+    },
+  };
+}
+
 function advancedQueueProjection(
   cumulativeVolume: string,
   quantity: string,
@@ -321,6 +390,41 @@ describe("Electron desktop runtime boundary", () => {
     }
   });
 
+  it("projects KRX and NXT as one integrated domestic order book", async () => {
+    const userDataPath = mkdtempSync(join(tmpdir(), "desktop-integrated-book-"));
+    temporaryDirectories.push(userDataPath);
+    const runtime = createRuntime(userDataPath);
+    try {
+      const krx = runtime.applyReadOnlyMarketProjection(
+        liveProjection("2026-07-22T00:10:00.000Z", "100", "1"),
+      );
+      expect(krx.venue).toBe("KRX");
+      const nxt = nxtLiveProjection("2026-07-22T00:10:01.000Z");
+      const integrated = runtime.applyReadOnlyMarketProjection({
+        ...nxt,
+        orderBook: {
+          ...nxt.orderBook!,
+          bids: [{ price: "69900", quantity: "25" }],
+          asks: [{ price: "70100", quantity: "35" }],
+        },
+      });
+
+      expect(integrated).toMatchObject({
+        instrumentId: "KRX:005930",
+        venue: "KRX",
+        currency: "KRW",
+        statusMessage:
+          "KIS 읽기 전용 · 국내 통합 호가(KRX/NXT) · 로컬 모의 체결",
+      });
+      expect(integrated.bids[0]).toEqual({ price: "69900", quantity: "125" });
+      expect(integrated.asks[0]).toEqual({ price: "70100", quantity: "135" });
+      expect(integrated.totalBidQuantity).toBe("125");
+      expect(integrated.totalAskQuantity).toBe("135");
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it("changes only the local account when an immediate paper buy fills", async () => {
     const userDataPath = mkdtempSync(join(tmpdir(), "desktop-local-fill-"));
     temporaryDirectories.push(userDataPath);
@@ -359,6 +463,54 @@ describe("Electron desktop runtime boundary", () => {
       expect(result.market.asks).toEqual(before.asks);
       expect(result.market.totalBidQuantity).toBe(before.totalBidQuantity);
       expect(result.market.totalAskQuantity).toBe(before.totalAskQuantity);
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("fills an immediate order from a fresh REST-like book snapshot without provider occurredAt", async () => {
+    const userDataPath = mkdtempSync(join(tmpdir(), "desktop-rest-book-fill-"));
+    temporaryDirectories.push(userDataPath);
+    const runtime = createRuntime(userDataPath);
+    try {
+      const receivedAt = new Date().toISOString();
+      const projection = liveProjection(receivedAt, "100", "1");
+      runtime.applyReadOnlyMarketProjection({
+        ...projection,
+        connectionStatus: "reconnecting",
+        freshness: "stale",
+        acknowledged: { orderBook: true, trade: false },
+        orderBook: {
+          ...projection.orderBook!,
+          occurredAt: null,
+        },
+        trade: null,
+        lastTradeReceivedAt: null,
+      });
+
+      const result = runtime.submitPaperOrder({
+        requestId: "local-rest-snapshot-buy-1",
+        instrumentId: "KRX:005930",
+        side: "BUY",
+        orderType: "LIMIT",
+        quantity: "1",
+        limitPrice: "70100",
+      });
+
+      expect(result).toMatchObject({
+        accepted: true,
+        status: "FILLED",
+        rejectionCode: null,
+        account: {
+          positions: [
+            {
+              instrumentId: "KRX:005930",
+              quantity: "1",
+              averagePrice: "70100",
+            },
+          ],
+        },
+      });
     } finally {
       await runtime.close();
     }
@@ -438,6 +590,235 @@ describe("Electron desktop runtime boundary", () => {
         side: "SELL",
         price: "69900",
         quantity: "1",
+      });
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("fills order-book level limit buys and sells from the integrated domestic book", async () => {
+    const userDataPath = mkdtempSync(join(tmpdir(), "desktop-level-clicks-"));
+    temporaryDirectories.push(userDataPath);
+    const runtime = createRuntime(userDataPath);
+    try {
+      const receivedAt = new Date().toISOString();
+      runtime.applyReadOnlyMarketProjection(
+        liveProjection(receivedAt, "100", "1"),
+      );
+
+      const buy = runtime.submitPaperOrder({
+        requestId: "local-level-buy-ask",
+        instrumentId: "KRX:005930",
+        side: "BUY",
+        orderType: "LIMIT",
+        quantity: "1",
+        limitPrice: "70100",
+      });
+      expect(buy).toMatchObject({
+        accepted: true,
+        status: "FILLED",
+        account: {
+          positions: [{ instrumentId: "KRX:005930", quantity: "1" }],
+        },
+      });
+
+      const sell = runtime.submitPaperOrder({
+        requestId: "local-level-sell-bid",
+        instrumentId: "KRX:005930",
+        side: "SELL",
+        orderType: "LIMIT",
+        quantity: "1",
+        limitPrice: "69900",
+      });
+      expect(sell).toMatchObject({
+        accepted: true,
+        status: "FILLED",
+        account: {
+          positions: [],
+        },
+      });
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("cancels a resting local paper order from the order book", async () => {
+    const userDataPath = mkdtempSync(join(tmpdir(), "desktop-local-cancel-"));
+    temporaryDirectories.push(userDataPath);
+    const runtime = createRuntime(userDataPath);
+    try {
+      runtime.applyReadOnlyMarketProjection(
+        liveProjection(new Date().toISOString(), "100", "1"),
+      );
+
+      const resting = runtime.submitPaperOrder({
+        requestId: "local-resting-buy-cancel",
+        instrumentId: "KRX:005930",
+        side: "BUY",
+        orderType: "LIMIT",
+        quantity: "3",
+        limitPrice: "69900",
+      });
+      expect(resting).toMatchObject({
+        accepted: true,
+        status: "RESTING",
+        account: {
+          openOrders: [
+            {
+              clientOrderId: "local-resting-buy-cancel",
+              instrumentId: "KRX:005930",
+              remainingQuantity: "3",
+            },
+          ],
+        },
+      });
+
+      const cancelled = runtime.cancelPaperOrder({
+        requestId: "cancel-local-resting-buy",
+        clientOrderId: "local-resting-buy-cancel",
+        instrumentId: "KRX:005930",
+      });
+      expect(cancelled).toMatchObject({
+        accepted: true,
+        status: "CANCELLED",
+        rejectionCode: null,
+        account: {
+          openOrders: [],
+        },
+      });
+      expect(cancelled.account.cashMinor).toBe("100000000");
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("sells a KRX-held domestic position through the NXT execution venue", async () => {
+    const userDataPath = mkdtempSync(join(tmpdir(), "desktop-nxt-sell-"));
+    temporaryDirectories.push(userDataPath);
+    const runtime = createRuntime(userDataPath);
+    try {
+      const receivedAt = new Date().toISOString();
+      runtime.applyReadOnlyMarketProjection(
+        liveProjection(receivedAt, "100", "1"),
+      );
+      const buy = runtime.submitPaperOrder({
+        requestId: "local-krx-buy-before-nxt-sell",
+        instrumentId: "KRX:005930",
+        side: "BUY",
+        orderType: "MARKET",
+        quantity: "94",
+        limitPrice: null,
+      });
+      expect(buy.accepted).toBe(true);
+
+      const nxtMarket = runtime.applyReadOnlyMarketProjection(
+        nxtLiveProjection(new Date().toISOString()),
+      );
+      expect(nxtMarket).toMatchObject({
+        instrumentId: "KRX:005930",
+        venue: "KRX",
+        tradingPhase: "REGULAR_CONTINUOUS",
+      });
+
+      const sell = runtime.submitPaperOrder({
+        requestId: "local-nxt-sell-held-krx-position",
+        instrumentId: "KRX:005930",
+        side: "SELL",
+        orderType: "MARKET",
+        quantity: "94",
+        limitPrice: null,
+      });
+      expect(sell).toMatchObject({
+        accepted: true,
+        status: "FILLED",
+        account: {
+          positions: [],
+        },
+      });
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("sells an NXT-acquired domestic position through the KRX execution venue", async () => {
+    const userDataPath = mkdtempSync(join(tmpdir(), "desktop-nxt-buy-krx-sell-"));
+    temporaryDirectories.push(userDataPath);
+    const runtime = createRuntime(userDataPath);
+    try {
+      const nxtMarket = runtime.applyReadOnlyMarketProjection(
+        nxtLiveProjection(new Date().toISOString()),
+      );
+      expect(nxtMarket).toMatchObject({
+        instrumentId: "KRX:005930",
+        venue: "KRX",
+      });
+      const buy = runtime.submitPaperOrder({
+        requestId: "local-nxt-buy-before-krx-sell",
+        instrumentId: "KRX:005930",
+        side: "BUY",
+        orderType: "MARKET",
+        quantity: "7",
+        limitPrice: null,
+      });
+      expect(buy).toMatchObject({
+        accepted: true,
+        status: "FILLED",
+        account: {
+          positions: [{ instrumentId: "KRX:005930", quantity: "7" }],
+        },
+      });
+
+      runtime.applyReadOnlyMarketProjection(
+        liveProjection(new Date().toISOString(), "100", "1"),
+      );
+      const sell = runtime.submitPaperOrder({
+        requestId: "local-krx-sell-held-nxt-position",
+        instrumentId: "KRX:005930",
+        side: "SELL",
+        orderType: "MARKET",
+        quantity: "7",
+        limitPrice: null,
+      });
+      expect(sell).toMatchObject({
+        accepted: true,
+        status: "FILLED",
+        account: {
+          positions: [],
+        },
+      });
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("accepts local paper fills from a domestic after-hours order book snapshot", async () => {
+    const userDataPath = mkdtempSync(join(tmpdir(), "desktop-after-hours-fill-"));
+    temporaryDirectories.push(userDataPath);
+    const runtime = createRuntime(userDataPath);
+    try {
+      const market = runtime.applyReadOnlyMarketProjection(
+        afterHoursDomesticProjection(new Date().toISOString()),
+      );
+      expect(market).toMatchObject({
+        instrumentId: "KRX:005930",
+        tradingPhase: "AFTER_HOURS_AUCTION",
+      });
+
+      const buy = runtime.submitPaperOrder({
+        requestId: "local-after-hours-buy",
+        instrumentId: "KRX:005930",
+        side: "BUY",
+        orderType: "LIMIT",
+        quantity: "3",
+        limitPrice: "261000",
+      });
+      expect(buy).toMatchObject({
+        accepted: true,
+        status: "FILLED",
+        rejectionCode: null,
+        account: {
+          positions: [{ instrumentId: "KRX:005930", quantity: "3" }],
+        },
       });
     } finally {
       await runtime.close();
@@ -583,6 +964,7 @@ describe("Electron desktop runtime boundary", () => {
       freshness: "live" as const,
       venue: "KRX",
       session: "REGULAR" as const,
+      tradingPhase: "REGULAR_CONTINUOUS" as const,
       orderBookReceivedAt: "2026-07-20T06:09:59.000Z",
       tradeReceivedAt: "2026-07-20T06:09:59.500Z",
       bids: [{ price: "70000", quantity: "10" }],
@@ -595,6 +977,7 @@ describe("Electron desktop runtime boundary", () => {
           ...executable,
           venue: "NASDAQ",
           session: "PRE",
+          tradingPhase: "REGULAR_CONTINUOUS",
           orderBookReceivedAt: "2026-07-20T06:09:10.000Z",
         },
         now,
@@ -606,6 +989,7 @@ describe("Electron desktop runtime boundary", () => {
           ...executable,
           venue: "NASDAQ",
           session: "PRE",
+          tradingPhase: "REGULAR_CONTINUOUS",
           tradeReceivedAt: null,
           orderBookReceivedAt: "2026-07-20T06:09:59.000Z",
         },
@@ -618,32 +1002,114 @@ describe("Electron desktop runtime boundary", () => {
           ...executable,
           venue: "NASDAQ",
           session: "PRE",
+          tradingPhase: "REGULAR_CONTINUOUS",
           orderBookReceivedAt: "2026-07-20T06:08:59.999Z",
         },
         now,
       ),
     ).toBe(false);
     expect(
-      isDesktopPaperMarketExecutable({ ...executable, session: "PRE" }, now),
-    ).toBe(false);
-    expect(
-      isDesktopPaperMarketExecutable({ ...executable, session: "AFTER" }, now),
-    ).toBe(false);
-    expect(
       isDesktopPaperMarketExecutable(
-        { ...executable, venue: "NXT", session: "PRE" },
+        { ...executable, session: "PRE", tradingPhase: "PREOPEN_AUCTION" },
         now,
       ),
     ).toBe(true);
     expect(
       isDesktopPaperMarketExecutable(
-        { ...executable, venue: "NXT", session: "AFTER" },
+        { ...executable, session: "AFTER", tradingPhase: "AFTER_HOURS_AUCTION" },
         now,
       ),
     ).toBe(true);
     expect(
       isDesktopPaperMarketExecutable(
-        { ...executable, freshness: "stale" },
+        {
+          ...executable,
+          session: "REGULAR",
+          tradingPhase: "CLOSING_AUCTION",
+          tradeReceivedAt: null,
+        },
+        now,
+      ),
+    ).toBe(true);
+    expect(
+      isDesktopPaperMarketExecutable(
+        { ...executable, venue: "NXT", session: "PRE", tradingPhase: "REGULAR_CONTINUOUS" },
+        now,
+      ),
+    ).toBe(true);
+    expect(
+      isDesktopPaperMarketExecutable(
+        { ...executable, venue: "NXT", session: "AFTER", tradingPhase: "REGULAR_CONTINUOUS" },
+        now,
+      ),
+    ).toBe(true);
+    expect(
+      isDesktopPaperMarketExecutable(
+        {
+          ...executable,
+          venue: "NXT",
+          session: "PRE",
+          tradingPhase: "REGULAR_CONTINUOUS",
+          tradeReceivedAt: null,
+        },
+        now,
+      ),
+    ).toBe(true);
+    expect(
+      isDesktopPaperMarketExecutable(
+        {
+          ...executable,
+          session: "AFTER",
+          tradingPhase: "REGULAR_CONTINUOUS",
+          orderBookReceivedAt: "2026-07-20T06:09:10.000Z",
+          tradeReceivedAt: null,
+        },
+        now,
+      ),
+    ).toBe(true);
+    expect(
+      isDesktopPaperMarketExecutable(
+        {
+          ...executable,
+          session: "AFTER",
+          tradingPhase: "REGULAR_CONTINUOUS",
+          orderBookReceivedAt: "2026-07-20T06:08:59.999Z",
+          tradeReceivedAt: null,
+        },
+        now,
+      ),
+    ).toBe(false);
+    expect(
+      isDesktopPaperMarketExecutable(
+        {
+          ...executable,
+          session: "REGULAR",
+          tradingPhase: "REGULAR_CONTINUOUS",
+          orderBookReceivedAt: "2026-07-20T06:09:10.000Z",
+        },
+        now,
+      ),
+    ).toBe(false);
+    expect(
+      isDesktopPaperMarketExecutable(
+        {
+          ...executable,
+          connectionState: "CONNECTING",
+          freshness: "stale",
+          tradeReceivedAt: null,
+        },
+        now,
+      ),
+    ).toBe(true);
+    expect(
+      isDesktopPaperMarketExecutable(
+        {
+          ...executable,
+          connectionState: "CONNECTING",
+          freshness: "stale",
+          orderBookReceivedAt: "2026-07-20T06:08:59.999Z",
+          tradeReceivedAt: null,
+        },
         now,
       ),
     ).toBe(false);
@@ -675,6 +1141,51 @@ describe("Electron desktop runtime boundary", () => {
     expect(resolveDesktopMarketSession("152000", "REGULAR")).toBe("CLOSED");
     expect(resolveDesktopMarketSession("154000", "REGULAR")).toBe("AFTER");
     expect(resolveDesktopMarketSession(null, "REGULAR")).toBe("REGULAR");
+  });
+
+  it("resolves KRX auctions as non-continuous while keeping NXT and US extended sessions continuous", () => {
+    expect(
+      resolveDesktopTradingPhase({
+        venue: "KRX",
+        session: "PRE",
+        providerTime: "085959",
+      }),
+    ).toBe("PREOPEN_AUCTION");
+    expect(
+      resolveDesktopTradingPhase({
+        venue: "KRX",
+        session: "REGULAR",
+        providerTime: "151959",
+      }),
+    ).toBe("REGULAR_CONTINUOUS");
+    expect(
+      resolveDesktopTradingPhase({
+        venue: "KRX",
+        session: "CLOSED",
+        providerTime: "152000",
+      }),
+    ).toBe("CLOSING_AUCTION");
+    expect(
+      resolveDesktopTradingPhase({
+        venue: "KRX",
+        session: "AFTER",
+        providerTime: "154000",
+      }),
+    ).toBe("AFTER_HOURS_AUCTION");
+    expect(
+      resolveDesktopTradingPhase({
+        venue: "NXT",
+        session: "PRE",
+        providerTime: "080000",
+      }),
+    ).toBe("REGULAR_CONTINUOUS");
+    expect(
+      resolveDesktopTradingPhase({
+        venue: "NASDAQ",
+        session: "AFTER",
+        providerTime: "170000",
+      }),
+    ).toBe("REGULAR_CONTINUOUS");
   });
 
   it("fills and restores a resting limit from observed KIS trade quantities", async () => {

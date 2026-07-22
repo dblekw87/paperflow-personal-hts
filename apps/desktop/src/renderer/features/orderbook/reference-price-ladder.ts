@@ -139,3 +139,26 @@ export function buildReferencePriceLadder(options: {
 
   return { asks: asks.reverse(), bids };
 }
+
+export function buildDomesticPriceLimits(options: {
+  readonly previousClosePrice: string | null;
+  readonly market: DomesticEquityMarket | null;
+  readonly securityType: DomesticSecurityType | null;
+}): { readonly upperLimitPrice: string | null; readonly lowerLimitPrice: string | null } {
+  const previousClose = Number(options.previousClosePrice);
+  if (
+    options.market === null ||
+    options.securityType !== "STOCK" ||
+    !Number.isFinite(previousClose) ||
+    previousClose <= 0
+  ) {
+    return { upperLimitPrice: null, lowerLimitPrice: null };
+  }
+
+  const upper = alignedPrice(previousClose * 1.3, options.market);
+  const lower = alignedPrice(previousClose * 0.7, options.market);
+  return {
+    upperLimitPrice: upper.toLocaleString("ko-KR"),
+    lowerLimitPrice: lower.toLocaleString("ko-KR"),
+  };
+}

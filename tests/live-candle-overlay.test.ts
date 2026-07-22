@@ -85,7 +85,44 @@ describe("live candle overlay", () => {
     expect(next.at(-1)?.volume).toBeNull();
   });
 
-  it("replaces a prior-session series when the first current-day trade arrives", () => {
+  it("continues the domestic intraday chart with NXT premarket and after-hours ticks", () => {
+    const premarket = applyLiveTradeToCandles([baseCandle], {
+      interval: "1m",
+      occurredAt: "2026-07-21T23:05:11.000Z",
+      price: "103",
+      cumulativeVolume: "3",
+      completeSessionHistory: false,
+    });
+    expect(premarket).toHaveLength(2);
+    expect(premarket[0]).toMatchObject({
+      openedAt: "2026-07-20T00:01:00.000Z",
+      forming: false,
+    });
+    expect(premarket.at(-1)).toMatchObject({
+      openedAt: "2026-07-21T23:05:00.000Z",
+      open: "103",
+      close: "103",
+      volume: null,
+      forming: true,
+    });
+
+    const afterHours = applyLiveTradeToCandles(premarket, {
+      interval: "5m",
+      occurredAt: "2026-07-22T06:42:10.000Z",
+      price: "108",
+      cumulativeVolume: "12",
+      completeSessionHistory: false,
+    });
+    expect(afterHours.at(-1)).toMatchObject({
+      openedAt: "2026-07-22T06:40:00.000Z",
+      open: "108",
+      close: "108",
+      volume: null,
+      forming: true,
+    });
+  });
+
+  it("preserves prior-session candles when the first current-day trade arrives", () => {
     const nextSession = applyLiveTradeToCandles([baseCandle], {
       interval: "1m",
       occurredAt: "2026-07-21T00:00:20.000Z",
@@ -94,8 +131,12 @@ describe("live candle overlay", () => {
       completeSessionHistory: true,
     });
 
-    expect(nextSession).toHaveLength(1);
+    expect(nextSession).toHaveLength(2);
     expect(nextSession[0]).toMatchObject({
+      openedAt: "2026-07-20T00:01:00.000Z",
+      forming: false,
+    });
+    expect(nextSession.at(-1)).toMatchObject({
       openedAt: "2026-07-21T00:00:00.000Z",
       open: "105",
       high: "105",
@@ -112,7 +153,7 @@ describe("live candle overlay", () => {
       cumulativeVolume: "9",
       completeSessionHistory: true,
     });
-    expect(secondTick[0]).toMatchObject({
+    expect(secondTick.at(-1)).toMatchObject({
       close: "106",
       volume: null,
     });

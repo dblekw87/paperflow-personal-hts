@@ -89,6 +89,7 @@ describe("desktop investor-flow projection", () => {
             market: "ALL",
             statusMessage: "KRX 전체 시장 수급",
           },
+          ...projection.markets,
         ],
       }),
     ).toBe(true);
@@ -112,9 +113,9 @@ describe("desktop investor-flow projection", () => {
     expect(isDesktopInvestorFlowProjection(unsafe)).toBe(false);
   });
 
-  it("rejects inconsistent net values and unavailable synthetic values", () => {
+  it("accepts provider-reported net values and rejects unavailable synthetic values", () => {
     const projection = validProjection();
-    const inconsistent = {
+    const providerReported = {
       ...projection,
       instrument: {
         ...projection.instrument,
@@ -128,7 +129,23 @@ describe("desktop investor-flow projection", () => {
         },
       },
     };
-    expect(isDesktopInvestorFlowProjection(inconsistent)).toBe(false);
+    expect(isDesktopInvestorFlowProjection(providerReported)).toBe(true);
+    expect(
+      isDesktopInvestorFlowProjection({
+        ...projection,
+        instrument: {
+          ...projection.instrument,
+          investorSummary: {
+            ...projection.instrument!.investorSummary,
+            participants: [
+              { ...flow("INDIVIDUAL"), buyAmount: "12.3" },
+              flow("FOREIGN"),
+              flow("INSTITUTION"),
+            ],
+          },
+        },
+      }),
+    ).toBe(false);
     expect(
       isDesktopInvestorFlowProjection({
         ...projection,

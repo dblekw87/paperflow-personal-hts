@@ -30,7 +30,7 @@ describe("desktop HTS UI safety invariants", () => {
     expect(ticket).toBe(-1);
     expect(app).toContain('isUsOneLevelBook');
     expect(app).toContain('"미국 실제 1호가 + 참고 가격대"');
-    expect(app).toContain('"KRX 10호가"');
+    expect(app).toContain('"국내 통합 10호가"');
     expect(app).toContain('"잔량 미수신"');
   });
 
@@ -46,7 +46,7 @@ describe("desktop HTS UI safety invariants", () => {
       'dataMode={hasDesktopRuntime ? "REAL" : "FIXTURE"}',
     );
     expect(app).toContain("window.paperTradingDesktop === undefined");
-    expect(app).toContain("isRegularPaperSession");
+    expect(app).toContain("isPaperOrderSession");
     expect(app).toContain("activeInstrumentId");
     expect(app).toContain("activeInstrumentName");
     expect(app).toContain("applyLiveTradeToCandles");
@@ -60,7 +60,7 @@ describe("desktop HTS UI safety invariants", () => {
     expect(app).not.toContain('instrumentId="KRX:005930"');
     expect(app).toContain("실제 주문 기능 없음");
     expect(app).toContain('KIS WebSocket{" "}');
-    expect(app).toContain('"장외/미연결"');
+    expect(app).toContain('"REST snapshot 사용"');
     expect(app).not.toContain("WS 정상");
     expect(app).not.toContain("SQLite WAL 정상");
     expect(app).not.toMatch(/<OrderTicket(?:\s|>)/);
@@ -74,13 +74,23 @@ describe("desktop HTS UI safety invariants", () => {
     expect(orderBook).toContain("합성 호가 미리보기");
     expect(orderBook).toContain('onLevelOrder("SELL", level.price)');
     expect(orderBook).toContain('onLevelOrder("BUY", level.price)');
+    expect(orderBook).toContain("onPendingOrderCancel");
+    expect(orderBook).toContain("대기 주문 박스는 클릭 시 취소");
     expect(orderBook).toContain("pt-order-book__action-cell--sell");
     expect(orderBook).toContain("pt-order-book__action-cell--buy");
     expect(orderBook).not.toContain("onClick={() => {\n        if (canOrder)");
     expect(orderBook).toContain("호가 클릭 주문 수량");
+    expect(orderBook).toContain("function editableQuantity");
+    expect(orderBook).toContain("replace(/^0+(?=\\d)/, \"\")");
+    expect(orderBook).toContain("onFocus={(event) =>");
+    expect(orderBook).toContain("function PriceLimitRow");
+    expect(orderBook).toContain('label="상한가"');
+    expect(orderBook).toContain('label="하한가"');
     expect(orderBook).not.toContain("QuickOrderSide");
     expect(orderBook).not.toContain("지정가");
     expect(app).toContain("submitOrderBookLevel");
+    expect(app).toContain('desktop.market?.tradingPhase !== "CLOSED"');
+    expect(app).toContain("최근 호가 스냅샷");
     expect(app).not.toContain("QUICK_ORDER_ARM_MS");
     expect(app).not.toContain("isConfirmed");
     expect(app).toContain("desktop.selectInstrument(rankingSelection)");
@@ -88,8 +98,14 @@ describe("desktop HTS UI safety invariants", () => {
     expect(preload).toContain("marketSelectInstrument");
     expect(preload).toContain("selectInstrument: async");
     expect(app).toContain("setSelectedInstrument({");
+    expect(app).toContain("refreshWatchlistQuotes");
+    expect(app).toContain("window.setInterval(refreshWatchlistQuotes, 30_000)");
     expect(app).toContain("SQLite 모의 체결 내역");
     expect(app).toContain("WORKSPACE_PAGE_LABELS");
+    expect(app).toContain("cancelPendingOrder");
+    expect(app).toContain("desktop.cancelPaperOrder");
+    expect(preload).toContain("cancel: async");
+    expect(preload).toContain("DESKTOP_CHANNELS.paperCancel");
   });
 
   it("supports dark, light and system themes without privileged renderer APIs", () => {
@@ -135,13 +151,33 @@ describe("desktop HTS UI safety invariants", () => {
     const app = readFileSync(join(rendererRoot, "app", "App.tsx"), "utf8");
 
     expect(app).toContain("function currencyDecimalToMinor");
+    expect(app).toContain("function normalizeWholeNumberInput");
     expect(app).toContain("const clampOrderQuantityForSide");
+    expect(app).toContain("const clampOrderBookInputQuantity");
     expect(app).toContain('side === "BUY"');
     expect(app).toContain("desktop.account?.baseCurrency === activeCurrency");
     expect(app).toContain("cashMinor / priceMinor");
     expect(app).toContain("activePosition?.quantity");
+    expect(app).toContain("heldQuantity > 0n");
+    expect(app).toContain("clampOrderBookInputQuantity(quantity)");
     expect(app).toContain("clampOrderQuantityForSide(side, draft.quantity, price)");
-    expect(app).toContain("clampOrderQuantityForSide(current.side, quantity)");
+  });
+
+  it("keeps domestic skeleton until chart history is ready but lets US quotes show with a real book", () => {
+    const app = readFileSync(join(rendererRoot, "app", "App.tsx"), "utf8");
+
+    expect(app).toContain("const tradingSkeletonStatusLabel");
+    expect(app).toContain("workspacePage === \"DASHBOARD\" &&\n    !hasKisHistory &&\n    (!isUsSelection || !hasLastOrderBook)");
+    expect(app).toContain("REST snapshot 사용 · WS 대기");
+    expect(app).toContain(
+      "<TradingWorkspaceSkeleton statusLabel={tradingSkeletonStatusLabel} />",
+    );
+    expect(app).toContain("const canOverlayLiveTradeOnChart");
+    expect(app).not.toContain('desktop.market?.venue === "NXT" && chartUsesKrRegularHistory');
+    expect(app).toContain("currentPrice={chartReferencePrice}");
+    expect(app).toContain("buildDomesticPriceLimits");
+    expect(app).toContain("upperLimitPrice={domesticPriceLimits.upperLimitPrice}");
+    expect(app).toContain("lowerLimitPrice={domesticPriceLimits.lowerLimitPrice}");
   });
 
   it("uses hardened Electron renderer settings and denies external windows", () => {
@@ -212,6 +248,7 @@ describe("desktop HTS UI safety invariants", () => {
     expect(runtime).toContain("planPassiveObservedTradeFill");
     expect(runtime).toContain("sumPaperFillQuantityForMarketEvent");
     expect(runtime).toContain("commitPaperExecution");
+    expect(runtime).toContain("cancelPaperOrder");
     expect(hook).toContain("window.paperTradingDesktop");
     expect(hook).toContain("onAccountProjection");
     expect(hook).toContain("loadChartHistory");

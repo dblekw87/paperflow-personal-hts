@@ -11,6 +11,7 @@ import type {
   DesktopInvestorFlowProjection,
   DesktopMarketCalendarProjection,
   DesktopMarketContextProjection,
+  DesktopPaperCancelRequest,
   DesktopPaperOrderRequest,
   DesktopPaperOrderResult,
   DesktopRankingProjection,
@@ -38,6 +39,9 @@ export interface DesktopRuntimeState {
   ) => Promise<DesktopChartProjection | null>;
   readonly submitPaperOrder: (
     request: DesktopPaperOrderRequest,
+  ) => Promise<DesktopPaperOrderResult | null>;
+  readonly cancelPaperOrder: (
+    request: DesktopPaperCancelRequest,
   ) => Promise<DesktopPaperOrderResult | null>;
   readonly loadRanking: (
     market: "KRX" | "US",
@@ -338,6 +342,26 @@ export function useDesktopRuntime(): DesktopRuntimeState {
     [],
   );
 
+  const cancelPaperOrder = useCallback(
+    async (
+      request: DesktopPaperCancelRequest,
+    ): Promise<DesktopPaperOrderResult | null> => {
+      const api = window.paperTradingDesktop;
+      if (!api) return null;
+      try {
+        const result = await api.paper.cancel(request);
+        setMarket(result.market);
+        setAccount(result.account);
+        setError(null);
+        return result;
+      } catch {
+        setError("로컬 모의주문 취소를 처리하지 못했습니다.");
+        return null;
+      }
+    },
+    [],
+  );
+
   const loadChartHistory = useCallback(
     async (
       interval: DesktopChartInterval,
@@ -620,5 +644,6 @@ export function useDesktopRuntime(): DesktopRuntimeState {
     loadInvestorFlow,
     loadShortSelling,
     submitPaperOrder,
+    cancelPaperOrder,
   };
 }

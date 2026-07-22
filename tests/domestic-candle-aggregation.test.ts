@@ -58,7 +58,7 @@ describe("domestic candle aggregation", () => {
     );
     expect(aggregated.source).toMatchObject({
       inputInterval: "1m",
-      bucketPolicy: "KRX_SESSION_ANCHORED_KST",
+      bucketPolicy: "DOMESTIC_INTEGRATED_SESSION_ANCHORED_KST",
       gapPolicy: "OBSERVED_CANDLES_ONLY",
     });
     expect(aggregated.candles).toHaveLength(2);
@@ -120,6 +120,53 @@ describe("domestic candle aggregation", () => {
       session: "CLOSING_AUCTION",
       openedAt: "2026-07-20T06:20:00.000Z",
       closedAt: "2026-07-20T06:30:00.000Z",
+      state: "FORMING",
+    });
+  });
+
+  it("anchors integrated domestic premarket and after-hours buckets to NXT sessions", () => {
+    const history = minuteHistory(
+      [
+        minuteCandle("08:00", { open: "100", close: "101" }, "CLOSED", "PRE_MARKET"),
+        minuteCandle("08:49", { high: "105", close: "104" }, "CLOSED", "PRE_MARKET"),
+        minuteCandle(
+          "15:40",
+          { open: "110", high: "112", low: "109", close: "111" },
+          "CLOSED",
+          "AFTER_MARKET",
+        ),
+        minuteCandle(
+          "19:59",
+          { open: "118", high: "120", low: "117", close: "119" },
+          "FORMING",
+          "AFTER_MARKET",
+        ),
+      ],
+      "2026-07-20T10:59:30.000Z",
+    );
+
+    const aggregated = aggregateDomesticCandleHistory(history, "60m");
+
+    expect(aggregated.candles).toHaveLength(3);
+    expect(aggregated.candles[0]).toMatchObject({
+      session: "PRE_MARKET",
+      openedAt: "2026-07-19T23:00:00.000Z",
+      closedAt: "2026-07-19T23:50:00.000Z",
+      open: "100",
+      close: "104",
+    });
+    expect(aggregated.candles[1]).toMatchObject({
+      session: "AFTER_MARKET",
+      openedAt: "2026-07-20T06:40:00.000Z",
+      closedAt: "2026-07-20T07:40:00.000Z",
+      open: "110",
+      close: "111",
+    });
+    expect(aggregated.candles[2]).toMatchObject({
+      session: "AFTER_MARKET",
+      openedAt: "2026-07-20T10:40:00.000Z",
+      closedAt: "2026-07-20T11:00:00.000Z",
+      close: "119",
       state: "FORMING",
     });
   });

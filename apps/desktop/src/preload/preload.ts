@@ -23,6 +23,7 @@ import {
   type DesktopInstrumentSearchProjection,
   type DesktopMarketCalendarProjection,
   type DesktopMarketContextProjection,
+  type DesktopPaperCancelRequest,
   type DesktopPaperOrderRequest,
   type DesktopPaperOrderResult,
   type DesktopRankingProjection,
@@ -186,6 +187,22 @@ function isPaperOrderResult(value: unknown): value is DesktopPaperOrderResult {
     isStringOrNull(value["rejectionCode"]) &&
     isAccountProjection(value["account"]) &&
     isMarketProjection(value["market"])
+  );
+}
+
+function isPaperCancelRequest(
+  value: unknown,
+): value is DesktopPaperCancelRequest {
+  return (
+    isRecord(value) &&
+    typeof value["requestId"] === "string" &&
+    /^[A-Za-z0-9._:-]{1,128}$/.test(value["requestId"]) &&
+    typeof value["clientOrderId"] === "string" &&
+    /^[A-Za-z0-9._:-]{1,128}$/.test(value["clientOrderId"]) &&
+    typeof value["instrumentId"] === "string" &&
+    /^(?:KRX:[0-9A-Z]{6,7}|(?:NASDAQ|NYSE|AMEX):[A-Z0-9.-]{1,20})$/.test(
+      value["instrumentId"],
+    )
   );
 }
 
@@ -526,6 +543,21 @@ const desktopApi = Object.freeze({
       );
       if (!isPaperOrderResult(result)) {
         throw new Error("Invalid paper-order result.");
+      }
+      return Object.freeze(result);
+    },
+    cancel: async (
+      request: Readonly<DesktopPaperCancelRequest>,
+    ): Promise<Readonly<DesktopPaperOrderResult>> => {
+      if (!isPaperCancelRequest(request)) {
+        throw new Error("Unsupported paper-cancel request.");
+      }
+      const result: unknown = await ipcRenderer.invoke(
+        DESKTOP_CHANNELS.paperCancel,
+        request,
+      );
+      if (!isPaperOrderResult(result)) {
+        throw new Error("Invalid paper-cancel result.");
       }
       return Object.freeze(result);
     },

@@ -40,6 +40,7 @@ import {
 } from "../features/chart/MarketChart.js";
 import { applyLiveTradeToCandles } from "../features/chart/live-candle-overlay.js";
 import {
+  buildDomesticPriceLimits,
   buildReferencePriceLadder,
   buildUsOneLevelPriceLadder,
   type DomesticEquityMarket,
@@ -63,6 +64,7 @@ import {
 import type {
   DesktopInformationItemProjection,
   DesktopInstrumentSearchItemProjection,
+  DesktopTradingPhase,
   DesktopRankingSort,
 } from "../../shared/desktop-contracts.js";
 import {
@@ -589,6 +591,25 @@ function marketDirection(
       : "positive";
 }
 
+function tradingPhaseLabel(phase: DesktopTradingPhase | undefined): string | null {
+  switch (phase) {
+    case "PREOPEN_AUCTION":
+      return "장전 동시호가";
+    case "REGULAR_CONTINUOUS":
+      return "연속매매";
+    case "VI_PAUSED":
+      return "VI 단일가";
+    case "CLOSING_AUCTION":
+      return "장마감 동시호가";
+    case "AFTER_HOURS_AUCTION":
+      return "시간외 단일가";
+    case "CLOSED":
+      return "장마감";
+    default:
+      return null;
+  }
+}
+
 function instrumentVenueLabel(instrumentId: string, domesticMarket?: string | null): string {
   if (instrumentId.startsWith("NASDAQ:")) return "NASDAQ";
   if (instrumentId.startsWith("NYSE:")) return "NYSE";
@@ -632,6 +653,10 @@ function domesticInstrumentName(symbol: string): string {
 function parseWholeNumberInput(value: string): bigint {
   const normalized = value.replaceAll(",", "").trim();
   return /^(?:0|[1-9]\d*)$/.test(normalized) ? BigInt(normalized) : 0n;
+}
+
+function normalizeWholeNumberInput(value: string): string {
+  return value.replace(/[^0-9]/g, "").replace(/^0+(?=\d)/, "");
 }
 
 function normalizePriceInput(value: string, currency: string): string | null {
@@ -986,6 +1011,7 @@ export function App() {
       instrumentId: market.instrumentId,
       occurredAt: market.tradeOccurredAt,
       price: market.price,
+      quantity: market.lastTradeQuantity,
       cumulativeVolume: market.cumulativeVolume,
     });
     if (observed === null) return;
@@ -996,6 +1022,7 @@ export function App() {
   }, [
     desktop.market?.cumulativeVolume,
     desktop.market?.instrumentId,
+    desktop.market?.lastTradeQuantity,
     desktop.market?.price,
     desktop.market?.sequence,
     desktop.market?.tradeOccurredAt,
@@ -1014,29 +1041,34 @@ export function App() {
       .map((item) => item.symbol);
     if (domesticSymbols.length === 0) return;
     let active = true;
-    void api.market
-      .getWatchlistQuotes(domesticSymbols)
-      .then((quotes) => {
-        if (!active) return;
-        setWatchlistQuotes((current) => {
-          const next = new Map(current);
-          for (const quote of quotes) {
-            next.set(quote.instrumentId, {
-              price: formatWholeNumber(quote.price, "—"),
-              changeRate: quote.changeRate,
-              direction: marketDirection(quote.changeRate),
-              turnover: formatKrwTurnoverEok(quote.cumulativeTurnover, "—"),
-              freshness: "stale",
-            });
-          }
-          return next;
+    const refreshWatchlistQuotes = () => {
+      void api.market
+        .getWatchlistQuotes(domesticSymbols)
+        .then((quotes) => {
+          if (!active) return;
+          setWatchlistQuotes((current) => {
+            const next = new Map(current);
+            for (const quote of quotes) {
+              next.set(quote.instrumentId, {
+                price: formatWholeNumber(quote.price, "—"),
+                changeRate: quote.changeRate,
+                direction: marketDirection(quote.changeRate),
+                turnover: formatKrwTurnoverEok(quote.cumulativeTurnover, "—"),
+                freshness: "stale",
+              });
+            }
+            return next;
+          });
+        })
+        .catch(() => {
+          // Per-symbol placeholders remain visible when the read-only provider is unavailable.
         });
-      })
-      .catch(() => {
-        // Per-symbol placeholders remain visible when the read-only provider is unavailable.
-      });
+    };
+    refreshWatchlistQuotes();
+    const timer = window.setInterval(refreshWatchlistQuotes, 30_000);
     return () => {
       active = false;
+      window.clearInterval(timer);
     };
   }, [hasDesktopRuntime, watchlist]);
 
@@ -1236,14 +1268,6 @@ export function App() {
     desktop.market?.mode === "KIS_READ_ONLY" &&
     desktop.market.connectionState === "LIVE" &&
     desktop.market.freshness === "live";
-  const isRegularPaperSession =
-    isKisLive &&
-    (desktop.market?.session === "REGULAR" ||
-      (desktop.market?.venue === "NXT" &&
-        (desktop.market.session === "PRE" ||
-          desktop.market.session === "AFTER")) ||
-      (["NASDAQ", "NYSE", "AMEX"].includes(desktop.market?.venue ?? "") &&
-        (desktop.market?.session === "PRE" || desktop.market?.session === "AFTER")));
   const activeSymbol = desktop.market?.symbol || "005930";
   const activeInstrumentId =
     desktop.market?.instrumentId ?? `KRX:${activeSymbol}`;
@@ -1257,6 +1281,13 @@ export function App() {
     desktop.market?.venue ?? "",
   );
   const sessionLabel = (() => {
+    const phaseLabel = tradingPhaseLabel(desktop.market?.tradingPhase);
+    if (
+      phaseLabel !== null &&
+      desktop.market?.tradingPhase !== "REGULAR_CONTINUOUS"
+    ) {
+      return phaseLabel;
+    }
     switch (desktop.market?.session) {
       case "PRE":
         return ["NASDAQ", "NYSE", "AMEX"].includes(desktop.market?.venue ?? "")
@@ -1390,12 +1421,25 @@ export function App() {
   const watched = watchlist.some(
     (item) => item.instrumentId === activeInstrumentId,
   );
-  const isClosedMarket =
-    desktop.market?.session === "CLOSED" ||
-    desktop.market?.session === "AFTER";
+  const isClosedMarket = desktop.market?.tradingPhase === "CLOSED";
   const hasLastOrderBook =
     (desktop.market?.asks.length ?? 0) > 0 &&
     (desktop.market?.bids.length ?? 0) > 0;
+  const orderBookReceivedAtMs =
+    desktop.market?.orderBookReceivedAt === null ||
+    desktop.market?.orderBookReceivedAt === undefined
+      ? Number.NaN
+      : Date.parse(desktop.market.orderBookReceivedAt);
+  const hasFreshOrderBookSnapshot =
+    hasLastOrderBook &&
+    desktop.market?.mode === "KIS_READ_ONLY" &&
+    desktop.market.connectionState !== "DISABLED" &&
+    desktop.market.freshness === "stale" &&
+    Number.isFinite(orderBookReceivedAtMs) &&
+    Date.now() - orderBookReceivedAtMs <= 60_000;
+  const isPaperOrderSession =
+    (isKisLive || hasFreshOrderBookSnapshot) &&
+    desktop.market?.tradingPhase !== "CLOSED";
   const marketStatus =
     isClosedMarket && (desktop.market?.price !== null || hasLastOrderBook)
       ? ("closed" as const)
@@ -1404,9 +1448,9 @@ export function App() {
         : desktop.market?.freshness === "stale"
           ? ("stale" as const)
         : ("offline" as const);
-  const hasClosedRestSnapshot =
+  const hasRestSnapshot =
     hasDesktopRuntime &&
-    isClosedMarket &&
+    !isKisLive &&
     (desktop.market?.price !== null || hasLastOrderBook);
   const referencePriceLadder = useMemo(
     () =>
@@ -1417,6 +1461,15 @@ export function App() {
         securityType: activeSecurityType,
       }),
     [activeDomesticMarket, activeSecurityType, chartCurrentPrice, chartPreviousClosePrice],
+  );
+  const domesticPriceLimits = useMemo(
+    () =>
+      buildDomesticPriceLimits({
+        previousClosePrice: chartPreviousClosePrice,
+        market: activeDomesticMarket,
+        securityType: activeSecurityType,
+      }),
+    [activeDomesticMarket, activeSecurityType, chartPreviousClosePrice],
   );
   const isUsOneLevelBook =
     ["NASDAQ", "NYSE", "AMEX"].includes(desktop.market?.venue ?? "") &&
@@ -1489,14 +1542,16 @@ export function App() {
         : candles,
     [candles, desktop.chart, hasDesktopRuntime, hasKisHistory],
   );
+  const canOverlayLiveTradeOnChart =
+    isKisLive &&
+    INTRADAY_CHART_INTERVALS.includes(interval);
   useEffect(() => {
     setLiveChartCandles(baseChartCandles);
   }, [baseChartCandles]);
   useEffect(() => {
     const market = desktop.market;
     if (
-      !isKisLive ||
-      !INTRADAY_CHART_INTERVALS.includes(interval) ||
+      !canOverlayLiveTradeOnChart ||
       market?.price === null ||
       market?.price === undefined ||
       market.tradeOccurredAt === null
@@ -1518,11 +1573,11 @@ export function App() {
     );
   }, [
     baseChartCandles,
+    canOverlayLiveTradeOnChart,
     desktop.chart?.paginationComplete,
     desktop.market,
     desktop.market?.sequence,
     interval,
-    isKisLive,
   ]);
   const displayedCandles =
     hasKisHistory &&
@@ -1530,8 +1585,21 @@ export function App() {
     liveChartCandles.length > 0
       ? liveChartCandles
       : baseChartCandles;
+  const chartReferencePrice = chartCurrentPrice;
+  const chartStatusLabel =
+    desktop.chart?.interval === interval &&
+    desktop.chart.range === chartRange
+      ? desktop.chart.statusMessage
+      : "KIS 차트 응답 대기 중";
+  const tradingSkeletonStatusLabel =
+    !hasKisHistory
+      ? chartStatusLabel
+      : (desktop.market?.statusMessage ?? "KIS 시세 수신 대기");
   const shouldShowTradingSkeleton =
-    hasDesktopRuntime && workspacePage === "DASHBOARD" && !hasKisHistory;
+    hasDesktopRuntime &&
+    workspacePage === "DASHBOARD" &&
+    !hasKisHistory &&
+    (!isUsSelection || !hasLastOrderBook);
   const orderBookReferenceStats = useMemo(() => {
     const canDerive52WeekRange =
       desktop.chart?.interval === "1d" &&
@@ -1753,11 +1821,6 @@ export function App() {
         };
       })
     : instruments;
-  const chartStatusLabel =
-    desktop.chart?.interval === interval &&
-    desktop.chart.range === chartRange
-      ? desktop.chart.statusMessage
-      : "KIS 차트 응답 대기 중";
   const normalizedInstrumentQuery = instrumentQuery.trim();
   const visibleInstrumentSearchItems =
     (selectedMarket === "미국"
@@ -1808,7 +1871,9 @@ export function App() {
     quantity: string,
     price: string | null = draft.limitPrice || desktop.market?.price || null,
   ): string => {
-    const requested = parseWholeNumberInput(quantity);
+    const normalizedQuantity = normalizeWholeNumberInput(quantity);
+    if (normalizedQuantity === "") return "";
+    const requested = parseWholeNumberInput(normalizedQuantity);
     if (side === "BUY") {
       const priceMinor =
         price === null ? null : currencyDecimalToMinor(price, activeCurrency);
@@ -1818,15 +1883,39 @@ export function App() {
           ? BigInt(desktop.account.cashMinor)
           : null;
       if (priceMinor === null || priceMinor <= 0n || cashMinor === null) {
-        return quantity;
+        return normalizedQuantity;
       }
       const affordableQuantity = cashMinor / priceMinor;
       return requested > affordableQuantity
         ? affordableQuantity.toString()
-        : quantity;
+        : normalizedQuantity;
     }
     const available = parseWholeNumberInput(activePosition?.quantity ?? "0");
-    return requested > available ? available.toString() : quantity;
+    return requested > available ? available.toString() : normalizedQuantity;
+  };
+  const clampOrderBookInputQuantity = (quantity: string): string => {
+    const normalizedQuantity = normalizeWholeNumberInput(quantity);
+    if (normalizedQuantity === "") return "";
+    const requested = parseWholeNumberInput(normalizedQuantity);
+    const heldQuantity = parseWholeNumberInput(activePosition?.quantity ?? "0");
+    if (heldQuantity > 0n) {
+      return requested > heldQuantity ? heldQuantity.toString() : normalizedQuantity;
+    }
+    const price = draft.limitPrice || desktop.market?.price || null;
+    const priceMinor =
+      price === null ? null : currencyDecimalToMinor(price, activeCurrency);
+    const cashMinor =
+      desktop.account?.baseCurrency === activeCurrency &&
+      /^\d+$/.test(desktop.account.cashMinor)
+        ? BigInt(desktop.account.cashMinor)
+        : null;
+    if (priceMinor === null || priceMinor <= 0n || cashMinor === null) {
+      return normalizedQuantity;
+    }
+    const affordableQuantity = cashMinor / priceMinor;
+    return requested > affordableQuantity
+      ? affordableQuantity.toString()
+      : normalizedQuantity;
   };
 
   const numericQuantity = parseWholeNumberInput(draft.quantity);
@@ -1842,7 +1931,7 @@ export function App() {
       return;
     }
     if (
-      isRegularPaperSession &&
+      isPaperOrderSession &&
       desktop.account?.storageState === "READY"
     ) {
       const requestId = `paper-${Date.now()}-${Math.random()
@@ -1880,7 +1969,7 @@ export function App() {
       setNotice(
         desktop.account?.storageState !== "READY"
           ? "SQLite 모의계좌가 준비되지 않아 주문하지 않았습니다."
-          : "KIS 정규장 실시간 호가가 아닐 때는 모의주문을 잠급니다.",
+          : "장마감이거나 최근 호가 스냅샷이 없어 호가 클릭 모의주문을 잠급니다.",
       );
       return;
     }
@@ -1907,6 +1996,21 @@ export function App() {
   };
   const submitOrderBookLevel = (side: "BUY" | "SELL", price: string) => {
     const quantity = clampOrderQuantityForSide(side, draft.quantity, price);
+    if (parseWholeNumberInput(quantity) <= 0n) {
+      setDraft((current) => ({
+        ...current,
+        side,
+        orderType: "LIMIT",
+        limitPrice: price,
+        quantity,
+      }));
+      setNotice(
+        side === "BUY"
+          ? "가용 현금으로는 선택한 가격에서 매수 가능한 수량이 없습니다."
+          : "선택 종목의 매도 가능 보유수량이 없습니다.",
+      );
+      return;
+    }
     const nextDraft: OrderTicketDraft = {
       ...draft,
       side,
@@ -1915,7 +2019,31 @@ export function App() {
       quantity,
     };
     setDraft(nextDraft);
+    setNotice(
+      `${side === "BUY" ? "매수" : "매도"} ${quantity}주 · ${price} 로컬 주문 처리 중`,
+    );
     void submitPaperDraft(nextDraft);
+  };
+
+  const cancelPendingOrder = async (clientOrderId: string) => {
+    if (!hasDesktopRuntime || desktop.account?.storageState !== "READY") {
+      setNotice("SQLite 로컬 계좌가 준비되지 않아 대기 주문을 취소하지 않았습니다.");
+      return;
+    }
+    const result = await desktop.cancelPaperOrder({
+      requestId: `paper-cancel-${Date.now()}-${Math.random()
+        .toString(36)
+        .slice(2, 8)}`,
+      clientOrderId,
+      instrumentId: activeInstrumentId,
+    });
+    if (result?.accepted) {
+      setNotice("대기 주문을 취소했습니다. 로컬 SQLite 계좌에만 반영됩니다.");
+    } else {
+      setNotice(
+        `대기 주문 취소 거절 · ${result?.rejectionCode ?? "LOCAL_RUNTIME_ERROR"}`,
+      );
+    }
   };
 
   return (
@@ -2077,15 +2205,15 @@ export function App() {
             <strong>
               {isKisLive
                 ? "KIS READ ONLY"
-                : hasClosedRestSnapshot
+                : hasRestSnapshot
                   ? "KIS REST SNAPSHOT"
                   : "KIS READ ONLY 준비"}
             </strong>
             <small>
               {desktop.loading
                 ? "로컬 projection 준비 중"
-                : hasClosedRestSnapshot
-                  ? "장마감 마지막 스냅샷 · WS 장외/미연결"
+                : hasRestSnapshot
+                  ? "REST snapshot 사용 · WS 실시간 갱신 대기"
                   : (desktop.market?.statusMessage ?? "WS 미연결 · fixture")}
             </small>
           </span>
@@ -2293,8 +2421,8 @@ export function App() {
           <div className="fixture-badge">
             {isKisLive
               ? "KIS LIVE · READ ONLY"
-              : hasClosedRestSnapshot
-                ? "REST 마지막 스냅샷 · WS 장외/미연결"
+              : hasRestSnapshot
+                ? "REST snapshot 사용 · WS 대기"
               : hasDesktopRuntime
                 ? "KIS 연결 대기 · 합성 시세 없음"
                 : "FIXTURE UI"}
@@ -2303,7 +2431,7 @@ export function App() {
 
         {workspacePage === "DASHBOARD" ? (
           shouldShowTradingSkeleton ? (
-            <TradingWorkspaceSkeleton statusLabel={chartStatusLabel} />
+            <TradingWorkspaceSkeleton statusLabel={tradingSkeletonStatusLabel} />
           ) : (
             <>
         <MarketContextStrip
@@ -2512,6 +2640,8 @@ export function App() {
                     : formatWholeNumber(trade.quantity, trade.quantity),
               }))}
             referenceStats={orderBookReferenceStats}
+            upperLimitPrice={domesticPriceLimits.upperLimitPrice}
+            lowerLimitPrice={domesticPriceLimits.lowerLimitPrice}
             currentDirection={displayDirection}
             freshness={
               isKisLive
@@ -2531,9 +2661,7 @@ export function App() {
                   ? `미국 실제 ${Math.min(desktop.market?.bids.length ?? 0, desktop.market?.asks.length ?? 0)}호가`
                 : isReferenceOrderBook
                   ? "잔량 미수신"
-                  : desktop.market?.venue === "NXT"
-                    ? "NXT 10호가"
-                    : "KRX 10호가"
+                  : "국내 통합 10호가"
             }
             asOfLabel={
               desktop.market?.providerTime
@@ -2545,15 +2673,15 @@ export function App() {
             canOrderFromLevel={
               hasDesktopRuntime &&
               hasLastOrderBook &&
-              isRegularPaperSession &&
+              isPaperOrderSession &&
               desktop.account?.storageState === "READY" &&
               numericQuantity > 0n
             }
             levelOrderDisabledReason={
               !hasLastOrderBook
                 ? "실제 호가 잔량을 수신한 뒤 주문할 수 있습니다."
-                : !isRegularPaperSession
-                ? "KRX/NXT 또는 미국 프리·정규·애프터 거래시간의 실시간 호가에서만 주문할 수 있습니다."
+                : !isPaperOrderSession
+                ? "장마감이거나 최근 호가 스냅샷이 없어 호가 클릭 주문을 잠급니다."
                 : desktop.account?.storageState !== "READY"
                   ? "SQLite 로컬 계좌를 준비하는 중입니다."
                   : "수량을 입력해 주세요."
@@ -2561,10 +2689,11 @@ export function App() {
             onOrderQuantityChange={(quantity) =>
               setDraft((current) => ({
                 ...current,
-                quantity: clampOrderQuantityForSide(current.side, quantity),
+                quantity: clampOrderBookInputQuantity(quantity),
               }))
             }
             onLevelOrder={submitOrderBookLevel}
+            onPendingOrderCancel={cancelPendingOrder}
             pendingOrders={(desktop.account?.openOrders ?? []).filter(
               (order) => order.instrumentId === activeInstrumentId,
             )}
@@ -2580,12 +2709,11 @@ export function App() {
             candles={displayedCandles}
             indicators={indicators}
             fillMarkers={fillMarkers}
-            currentPrice={chartCurrentPrice}
+            currentPrice={chartReferencePrice}
             previousClosePrice={chartPreviousClosePrice}
             freshness={
               hasKisHistory
-                ? isRegularPaperSession &&
-                  INTRADAY_CHART_INTERVALS.includes(interval)
+                ? canOverlayLiveTradeOnChart
                   ? "LIVE"
                   : desktop.market?.freshness === "stale"
                     ? "STALE"
@@ -3574,8 +3702,8 @@ export function App() {
           KIS WebSocket{" "}
           {isKisLive
             ? "읽기 전용 연결"
-            : hasClosedRestSnapshot
-              ? "장외/미연결"
+            : hasRestSnapshot
+              ? "REST snapshot 사용"
               : "미연결"}
         </span>
         <span>

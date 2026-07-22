@@ -1125,6 +1125,26 @@ select:focus-visible {
 .pt-order-book__rate.negative { color: var(--color-negative); }
 .pt-order-book__rate.flat { color: var(--color-text-tertiary); }
 
+.pt-order-book__limit-row td {
+  height: 24px;
+  border-block: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-bg-elevated) 74%, transparent);
+}
+
+.pt-order-book__limit-label {
+  padding-inline: 7px !important;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-weight: 700;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.pt-order-book__limit-price {
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .pt-order-book__row {
   cursor: default;
   outline: none;
@@ -1220,7 +1240,7 @@ select:focus-visible {
 .pt-order-book__trade-empty { display: block !important; padding-top: 8px; color: var(--color-text-tertiary); text-align: center; }
 
 .pt-order-book__action-cell {
-  width: 48px;
+  width: 54px;
   padding: 2px !important;
   background: var(--color-bg-canvas);
 }
@@ -1230,9 +1250,9 @@ select:focus-visible {
   isolation: isolate;
   overflow: hidden;
   width: 100%;
-  min-width: 42px;
+  min-width: 48px;
   height: 22px;
-  padding: 0;
+  padding: 0 14px;
   color: var(--color-text-tertiary);
   background: color-mix(
     in srgb,
@@ -1287,7 +1307,7 @@ select:focus-visible {
 }
 
 .pt-order-book__action-cell--sell button::before {
-  right: 10px;
+  right: 7px;
   transform: translateY(-50%) rotate(45deg);
 }
 
@@ -1310,7 +1330,7 @@ select:focus-visible {
 }
 
 .pt-order-book__action-cell--buy button::before {
-  left: 10px;
+  left: 7px;
   transform: translateY(-50%) rotate(225deg);
 }
 

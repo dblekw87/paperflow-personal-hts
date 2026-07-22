@@ -11,12 +11,17 @@ export interface ObservedTradeTapeItem {
 
 interface PreviousTradeState {
   readonly identity: string;
-  readonly price: bigint;
+  readonly price: string;
   readonly cumulativeVolume: bigint | null;
 }
 
 function unsignedInteger(value: string | null): bigint | null {
   return value !== null && /^\d+$/.test(value) ? BigInt(value) : null;
+}
+
+function positiveDecimal(value: string | null): string | null {
+  if (value === null || !/^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value)) return null;
+  return /^0(?:\.0+)?$/.test(value) ? null : value;
 }
 
 export class ObservedTradeTapeAccumulator {
@@ -26,20 +31,20 @@ export class ObservedTradeTapeAccumulator {
     readonly instrumentId: string;
     readonly occurredAt: string | null;
     readonly price: string | null;
+    readonly quantity: string | null;
     readonly cumulativeVolume: string | null;
   }): ObservedTradeTapeItem | null {
+    const price = positiveDecimal(input.price);
     if (
       input.occurredAt === null ||
       !Number.isFinite(Date.parse(input.occurredAt)) ||
-      input.price === null ||
-      !/^\d+$/.test(input.price) ||
-      BigInt(input.price) <= 0n
+      price === null
     ) {
       return null;
     }
-    const price = BigInt(input.price);
+    const tradeQuantity = unsignedInteger(input.quantity);
     const cumulativeVolume = unsignedInteger(input.cumulativeVolume);
-    const identity = `${input.occurredAt}:${cumulativeVolume?.toString() ?? "unknown"}`;
+    const identity = `${input.occurredAt}:${price}:${tradeQuantity?.toString() ?? cumulativeVolume?.toString() ?? "unknown"}`;
     const previous = this.#previous.get(input.instrumentId);
     if (previous?.identity === identity) return null;
     if (
@@ -52,12 +57,13 @@ export class ObservedTradeTapeAccumulator {
     }
 
     const quantity =
-      previous?.cumulativeVolume !== null &&
+      tradeQuantity ??
+      (previous?.cumulativeVolume !== null &&
       previous?.cumulativeVolume !== undefined &&
       cumulativeVolume !== null &&
       cumulativeVolume > previous.cumulativeVolume
         ? cumulativeVolume - previous.cumulativeVolume
-        : null;
+        : null);
     const direction: ObservedTradeDirection =
       previous === undefined || price === previous.price
         ? "flat"
@@ -74,7 +80,7 @@ export class ObservedTradeTapeAccumulator {
       id: `${input.instrumentId}:${identity}`,
       instrumentId: input.instrumentId,
       occurredAt: input.occurredAt,
-      price: input.price,
+      price,
       quantity: quantity === null ? null : quantity.toString(),
       direction,
     };

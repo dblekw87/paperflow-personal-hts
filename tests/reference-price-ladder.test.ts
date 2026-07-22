@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { buildReferencePriceLadder, buildUsOneLevelPriceLadder } from "../apps/desktop/src/renderer/features/orderbook/reference-price-ladder.js";
+import {
+  buildDomesticPriceLimits,
+  buildReferencePriceLadder,
+  buildUsOneLevelPriceLadder,
+} from "../apps/desktop/src/renderer/features/orderbook/reference-price-ladder.js";
 
 describe("reference price ladder", () => {
   it("expands an actual US top of book with non-tradable cent reference levels", () => {
@@ -86,5 +90,25 @@ describe("reference price ladder", () => {
         securityType: "ETF",
       }),
     ).toEqual({ asks: [], bids: [] });
+  });
+
+  it("builds domestic upper and lower limit prices from previous close", () => {
+    expect(
+      buildDomesticPriceLimits({
+        previousClosePrice: "259000",
+        market: "KOSPI",
+        securityType: "STOCK",
+      }),
+    ).toEqual({
+      upperLimitPrice: "336,500",
+      lowerLimitPrice: "181,000",
+    });
+    expect(
+      buildDomesticPriceLimits({
+        previousClosePrice: "50000",
+        market: "KOSPI",
+        securityType: "ETF",
+      }),
+    ).toEqual({ upperLimitPrice: null, lowerLimitPrice: null });
   });
 });

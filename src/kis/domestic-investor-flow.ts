@@ -207,7 +207,15 @@ function flow(input: {
   readonly buyAmount: string;
   readonly netBuyAmount: string;
 }): z.infer<typeof investorFlowSchema> {
-  return investorFlowSchema.parse(input);
+  const parsed = investorFlowSchema.parse(input);
+  return {
+    sellQuantity: BigInt(parsed.sellQuantity).toString(),
+    buyQuantity: BigInt(parsed.buyQuantity).toString(),
+    netBuyQuantity: BigInt(parsed.netBuyQuantity).toString(),
+    sellAmount: BigInt(parsed.sellAmount).toString(),
+    buyAmount: BigInt(parsed.buyAmount).toString(),
+    netBuyAmount: BigInt(parsed.netBuyAmount).toString(),
+  };
 }
 
 export class KisDomesticInvestorFlowClient {

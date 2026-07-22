@@ -85,6 +85,16 @@ export function nxtSessionFromProviderTime(
   return "CLOSED";
 }
 
+export function consolidatedSessionFromProviderTime(
+  providerTime: string,
+): TradeTick["session"] {
+  if (!/^\d{6}$/.test(providerTime)) return "UNKNOWN";
+  if (providerTime >= "080000" && providerTime < "085000") return "PRE";
+  if (providerTime >= "090000" && providerTime <= "153000") return "REGULAR";
+  if (providerTime >= "154000" && providerTime <= "200000") return "AFTER";
+  return "CLOSED";
+}
+
 export function normalizeDomesticTrade(frame: KisPipeFrame): TradeTick[] {
   if (frame.trId !== KIS_TR.domesticTrade) {
     throw new KisApiError({
@@ -144,10 +154,10 @@ function normalizeAlternativeDomesticTrade(
     return TradeTickSchema.parse({
       instrumentId: `${venue}:${required(record, "MKSC_SHRN_ISCD")}`,
       venue,
-      // This classification is applied only to an actual NXT trade frame.
-      // The live stream additionally requires the H0NXMKO0 subscription ACK.
       session:
-        venue === "NXT" ? nxtSessionFromProviderTime(providerTime) : "UNKNOWN",
+        venue === "NXT"
+          ? nxtSessionFromProviderTime(providerTime)
+          : consolidatedSessionFromProviderTime(providerTime),
       price: required(record, "STCK_PRPR"),
       quantity: required(record, "CNTG_VOL"),
       change: signedChange(

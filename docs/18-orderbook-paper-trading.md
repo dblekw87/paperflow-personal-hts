@@ -52,7 +52,7 @@ DRAFT
 
 `clientOrderId`는 계좌 범위 unique다. 같은 ID의 재시도는 새로운 fill이나 원장을 만들지 않는다. 취소는 open 잔량에 대한 로컬 명령이며 외부 전송이 없다.
 
-접수 전에 main-process의 검증형 orchestration이 fill planner가 직접 계산한 visible-depth 원금(지정가는 전체 주문수량 × limit 예약액)과 fee/tax reserve를 사용해 가용 현금·보유량을 검사한다. renderer나 caller가 전달한 예상 원금을 신뢰하지 않는다. 이어 DB transaction owner가 같은 transaction 안에서 최신 가용 현금·예약 현금, 가용 보유량·예약 수량을 다시 검증하고 예약한 뒤에만 접수와 fill을 커밋한다. 매수는 필요액을 초과하면, 매도는 가용 보유수량을 초과하면 side effect 없이 거부한다. 공매도는 별도 기능이 완성되기 전 금지다. 실제 장 운영시간과 휴장 calendar가 생성한 trading phase가 체결 가능 상태가 아니면 주문을 체결하지 않는다.
+접수 전에 main-process의 검증형 orchestration이 fill planner가 직접 계산한 visible-depth 원금(지정가는 전체 주문수량 × limit 예약액)과 fee/tax reserve를 사용해 가용 현금·보유량을 검사한다. renderer나 caller가 전달한 예상 원금을 신뢰하지 않는다. 이어 DB transaction owner가 같은 transaction 안에서 최신 가용 현금·예약 현금, 가용 보유량·예약 수량을 다시 검증하고 예약한 뒤에만 접수와 fill을 커밋한다. 매수는 필요액을 초과하면, 매도는 가용 보유수량을 초과하면 side effect 없이 거부한다. 공매도는 별도 기능이 완성되기 전 금지다. 장마감 또는 stale·미수신 상태에서는 주문을 체결하지 않는다.
 
 fill planner는 불변 원장을 직접 쓰지 않는다. `FILL_AND_LEDGER_COMMIT_REQUESTED` 계획 이벤트를 만들고 fee와 tax를 별도 ledger event로 계획한다. Storage owner가 주문·fill·현금 원장·position lot·projection·domain/outbox event를 하나의 SQLite transaction으로 커밋한다. 중간 실패 시 전부 rollback한다.
 
@@ -88,7 +88,7 @@ trading phase는 `PREOPEN_AUCTION`, `REGULAR_CONTINUOUS`, `VI_PAUSED`, `CLOSING_
 
 - `REGULAR_CONTINUOUS`: 선택한 fill model을 적용한다.
 - `VI_PAUSED`: 연속매매 fill과 queue progress를 중단한다. 해제 후 새 canonical snapshot으로 queue와 sequence를 재동기화하기 전 체결하지 않는다.
-- 장전·장마감·시간외 단일가/동시호가: 호가 depth를 즉시 소진하지 않는다. 실제 확정 auction print와 clearing price가 수신된 뒤 조건을 만족한 주문에만 보수적으로 관측 수량을 allocation한다.
+- 장전·장마감·시간외 단일가/동시호가: fresh 양방향 호가가 있으면 로컬 모의주문을 허용한다. 확정 auction print adapter가 연결되기 전까지 체결가는 visible book 기반 보수 추정으로 표시한다.
 - `CLOSED`: 접수·체결을 금지하고 DAY 잔량의 expire 계획을 만든다.
 
 세션 경계를 넘은 queue state를 재사용하지 않는다. auction과 continuous는 별도 session key, dedupe cursor, fill policy를 가진다.
@@ -97,7 +97,7 @@ trading phase는 `PREOPEN_AUCTION`, `REGULAR_CONTINUOUS`, `VI_PAUSED`, `CLOSING_
 
 KIS 시세는 실제 시장 관측값이지만 로컬 fill은 거래소 체결이 아니다. 네트워크 지연, 누락 tick, feed entitlement, 호가 통합 방식, 숨은 주문, 취소·정정, 내 주문의 시장 영향, 실제 queue priority를 재현하지 못한다. 특히 미국 1단계 호가는 깊은 시장가 주문의 실제 평균가를 알려주지 않는다.
 
-UI는 `실제 시세 · 로컬 모의체결`, fill model, freshness, depth capability, queue quality를 함께 표시한다. stale 상태나 VI/auction 재동기화 중에는 주문 버튼을 disabled하고 이유를 보인다.
+UI는 `실제 시세 · 로컬 모의체결`, fill model, freshness, depth capability, queue quality를 함께 표시한다. stale 상태, 장마감, VI/auction 재동기화 중에는 주문 버튼을 disabled하고 이유를 보인다.
 
 ## 9. Health, replay, acceptance
 
@@ -120,16 +120,16 @@ Health는 feed freshness, clock skew, sequence gap/rewind, session calendar, ins
 
 `INITIAL_CONSERVATIVE_V1`은 위 기본 replay, 안전·원장 검사와 UI 불변식을 통과하면 출시할 수 있다. `ADVANCED_QUEUE_V1`은 별도 feature flag이며 고급 DoD와 장중 장시간 replay 비교가 완료된 뒤에만 선택 가능하다.
 
-## 10. 현재 runtime 상태 (2026-07-20)
+## 10. 현재 runtime 상태 (2026-07-22)
 
 Electron runtime은 기본 `INITIAL_CONSERVATIVE_V1`과 선택형 `ADVANCED_QUEUE_V1`의 정규 연속매매 경로를 구현한다. 실제 KIS 체결 tick의 수량을 같은 종목의 open `LIMIT` 주문들이 제출시각 순서로 공유한다. SQLite v4의 세션별 누적거래량 high-watermark와 immutable market-event receipt가 duplicate·역행 tick 및 앱 재시작 후 재처리를 막는다. event claim 뒤 process crash가 나면 과다체결보다 미체결을 택하는 fail-closed 정책이다.
 
 고급 프로필은 주문 당시 같은 편·같은 가격 표시잔량에 주입된 safety factor를 적용해 선행 추정량을 만들고, 실제 체결량과 호가 감소량의 큰 값 하나만 차감한다. queue state는 `paper_advanced_queue_states`에 저장되며 재시작 sequence 불연속 시 새 fresh book으로 보수적 resnapshot한다. UI는 `QUEUE_ESTIMATED`와 factor를 표시하고 실제 queue라고 표현하지 않는다.
 
-VI pause/resync, finalized auction print, 주입형 상·하한가/tick guard, DAY expiry 계획의 순수 정책은 구현됐다. 다만 KIS VI/auction event adapter와 expiry DB commit은 아직 runtime에 연결되지 않았으므로 정규 연속매매 외 주문·체결은 계속 차단한다.
+VI pause/resync, finalized auction print, 주입형 상·하한가/tick guard, DAY expiry 계획의 순수 정책은 구현됐다. Electron runtime은 KRX provider time을 `PREOPEN_AUCTION`, `REGULAR_CONTINUOUS`, `CLOSING_AUCTION`, `AFTER_HOURS_AUCTION`, `CLOSED`로 투영하고, 장마감이 아닌 phase에서 fresh 양방향 호가가 있으면 호가 클릭 주문을 허용한다. 장전 동시호가, 장마감 동시호가, 시간외 단일가는 확정 auction print adapter가 연결되기 전까지 visible book 기반 보수 추정 체결로 표시한다. NXT와 미국 프리·정규·애프터는 현재 지원 범위 안에서 연속매매 phase로 취급한다.
 
-호가 UI는 중앙 KRX 10호가 배열, 왼쪽 로컬 모의매도, 오른쪽 로컬 모의매수로 구현됐다. 양쪽 주문은 현재 입력 수량과 선택 지정가를 사용하고 KIS 정규장 `LIVE` 및 SQLite `READY`가 아니면 잠긴다. renderer는 주문을 KIS에 보내지 않고 typed IPC를 통해 로컬 sidecar에만 전달한다.
+호가 UI는 중앙 KRX 10호가 배열, 왼쪽 로컬 모의매도, 오른쪽 로컬 모의매수로 구현됐다. 양쪽 주문은 현재 입력 수량과 선택 지정가를 사용하고 KIS `LIVE`, SQLite `READY`, fresh 호가, 장마감이 아닌 phase가 아니면 잠긴다. renderer는 주문을 KIS에 보내지 않고 typed IPC를 통해 로컬 sidecar에만 전달한다.
 
-NXT 제품 경로는 `H0NXASP0`·`H0NXCNT0`·`H0NXMKO0`을 함께 구독한다. 2026-07-21 KIS paper 장중 probe에서 세 ACK와 15초간 NXT 실제 호가 75건·체결 1,192건을 확인했다. 공식 65필드와 관측 62필드는 별도 exact layout으로 파싱한다. 세 채널 ACK와 최신 NXT 호가·체결을 실행 조건으로 삼고, 공식 프리 `08:00~08:50`, 메인 `09:00:30~15:20`, 애프터 체결 `15:40~20:00` 구간 밖에서는 fail closed한다. 장상태 채널은 상태 변경 frame을 검증하지만 매 구간 반복 송신을 가정하지 않는다. 동일 주식의 보유량은 security 수준에서 합산하고 신규 주문과 대기열은 실제 execution venue로 분리한다. 통합 `H0UNASP0/H0UNCNT0`은 실행 거래소 attribution이 없으므로 SOR·queue 체결 근거로 사용하지 않는다.
+NXT 제품 경로는 `H0NXASP0`·`H0NXCNT0`·`H0NXMKO0`을 함께 구독한다. 2026-07-21 KIS paper 장중 probe에서 세 ACK와 15초간 NXT 실제 호가 75건·체결 1,192건을 확인했다. 공식 65필드와 관측 62필드는 별도 exact layout으로 파싱한다. 세 채널 ACK와 최신 NXT 호가·체결을 실행 조건으로 삼고, 공식 프리 `08:00~08:50`, 메인 `09:00:30~15:20`, 애프터 체결 `15:40~20:00` 구간 밖에서는 fail closed한다. 장상태 채널은 상태 변경 frame을 검증하지만 매 구간 반복 송신을 가정하지 않는다. 동일 주식의 보유량은 security 수준에서 합산하고 신규 주문과 대기열은 실제 execution venue로 분리한다. 차트는 KRX REST 분봉을 기준 history로 사용하되 NXT 프리·정규·애프터 체결을 같은 KST intraday 시간축의 live forming candle로 이어 붙인다. 통합 `H0UNASP0/H0UNCNT0`은 실행 거래소 attribution이 없으므로 SOR·queue 체결 근거로 사용하지 않는다.
 
 미국 주식은 `HDFSASP0` 1호가와 `HDFSCNT0` 체결을 `NASDAQ/NYSE/AMEX`별로 구독한다. 미국 동부시간과 DST를 적용해 프리 `04:00~09:30`, 정규 `09:30~16:00`, 애프터 `16:00~20:00`을 구분하며 세 구간 모두 fresh한 양방향 1호가와 체결이 있을 때만 로컬 주문을 받는다. 계좌에는 USD 100,000(센트 단위 `10000000`)을 별도 불변 원장으로 넣고 미국 체결 원금·수수료는 USD minor unit으로 계산한다. 미국 매도에 국내 거래세를 적용하지 않는다.

@@ -549,6 +549,15 @@ export function nxtDomesticProbeSubscriptions(
   ];
 }
 
+export function unifiedDomesticProbeSubscriptions(
+  symbol: string,
+): WsSubscription[] {
+  return [
+    { trId: KIS_TR.domesticUnifiedOrderBook, trKey: symbol },
+    { trId: KIS_TR.domesticUnifiedTrade, trKey: symbol },
+  ];
+}
+
 export function usProbeSubscriptions(
   exchange: "NAS" | "NYS" | "AMS",
   symbol: string,

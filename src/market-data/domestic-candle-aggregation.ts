@@ -32,15 +32,15 @@ const INTRADAY_INTERVAL_MINUTES: Record<IntradayTargetInterval, number> = {
 };
 
 const KRX_SESSION_BOUNDS = {
-  PRE_MARKET: { anchorMinute: 0, endMinute: 9 * 60 },
+  PRE_MARKET: { anchorMinute: 8 * 60, endMinute: 8 * 60 + 50 },
   REGULAR: { anchorMinute: 9 * 60, endMinute: 15 * 60 + 20 },
   CLOSING_AUCTION: {
     anchorMinute: 15 * 60 + 20,
     endMinute: 15 * 60 + 30,
   },
   AFTER_MARKET: {
-    anchorMinute: 15 * 60 + 30,
-    endMinute: 24 * 60,
+    anchorMinute: 15 * 60 + 40,
+    endMinute: 20 * 60,
   },
 } as const;
 
@@ -120,7 +120,7 @@ export function aggregateDomesticCandleHistory(
       dataEnvironment: history.source.dataEnvironment,
       inputInterval: history.interval,
       fetchedAt: history.source.fetchedAt,
-      bucketPolicy: "KRX_SESSION_ANCHORED_KST",
+      bucketPolicy: "DOMESTIC_INTEGRATED_SESSION_ANCHORED_KST",
       gapPolicy: "OBSERVED_CANDLES_ONLY",
     },
     quality: {

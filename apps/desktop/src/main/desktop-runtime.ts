@@ -80,7 +80,12 @@ import { KrxDailyStockTradeClient } from "../../../../src/krx/daily-stock-trade.
 import { KrxInvestorFlowClient } from "../../../../src/krx/investor-flow.js";
 import { KrxShortSellingClient } from "../../../../src/krx/short-selling.js";
 import { DomesticKisLiveStream } from "../../../../src/kis/ws/live-stream.js";
-import { domesticSessionFromProviderTime } from "../../../../src/kis/ws/normalize.js";
+import {
+  consolidatedSessionFromProviderTime,
+  domesticSessionFromProviderTime,
+  nxtSessionFromProviderTime,
+} from "../../../../src/kis/ws/normalize.js";
+import { resolveUsEquitySession } from "../../../../src/market-data/us-equity-session.js";
 import type { MarketLiveProjection } from "../../../../src/contracts/market-live-projection.js";
 import { aggregateDomesticCandleHistory } from "../../../../src/market-data/domestic-candle-aggregation.js";
 import {
@@ -109,6 +114,7 @@ import type {
   DesktopConnectionState,
   DesktopMarketProjection,
   DesktopMarketSession,
+  DesktopTradingPhase,
   DesktopInformationFeedProjection,
   DesktopInformationItemProjection,
   DesktopInvestorFlowProjection,
@@ -117,6 +123,7 @@ import type {
   DesktopMarketCalendarSourceProjection,
   DesktopMarketContextItemProjection,
   DesktopMarketContextProjection,
+  DesktopPaperCancelRequest,
   DesktopPaperOrderRequest,
   DesktopPaperOrderResult,
   DesktopRankingProjection,
@@ -142,6 +149,9 @@ const INFORMATION_CACHE_TTL_MS = 30_000;
 const MARKET_CONTEXT_CACHE_TTL_MS = 15_000;
 const MARKET_CONTEXT_REQUEST_GAP_MS = 120;
 const MARKET_CALENDAR_CACHE_TTL_MS = 5 * 60_000;
+const US_EQUITY_VENUES = ["NASDAQ", "NYSE", "AMEX"] as const;
+const DOMESTIC_REST_FALLBACK_POLL_INTERVAL_MS = 10_000;
+const DOMESTIC_REST_FALLBACK_WS_FRESH_MS = 8_000;
 
 function fixtureMarketCalendarProjection(): DesktopMarketCalendarProjection {
   const detectedAt = "2026-07-22T00:00:00.000Z";
@@ -472,6 +482,19 @@ function koreanCalendarDate(now = new Date()): string {
   return `${part("year")}${part("month")}${part("day")}`;
 }
 
+function koreanClockTime(now = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Seoul",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(now);
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((entry) => entry.type === type)?.value ?? "00";
+  return `${part("hour")}${part("minute")}${part("second")}`;
+}
+
 function previousKoreanBusinessDate(now = new Date()): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Seoul",
@@ -560,10 +583,13 @@ function containsHangul(value: string): boolean {
   return /[가-힣]/.test(value);
 }
 
-function desktopPaperPolicy(venue = "KRX"): PaperFillPolicy {
+function desktopPaperPolicy(
+  venue = "KRX",
+  maxMarketDataAgeMs = MAX_EXECUTION_MARKET_AGE_MS,
+): PaperFillPolicy {
   const isUs = ["NASDAQ", "NYSE", "AMEX"].includes(venue);
   return {
-    maxMarketDataAgeMs: MAX_EXECUTION_MARKET_AGE_MS,
+    maxMarketDataAgeMs,
     passiveFillModel: "AT_OR_THROUGH",
     marketRemainder: "CANCEL",
     marketableLimitRemainder: "REST",
@@ -597,6 +623,78 @@ function isRecentProviderEvent(
   );
 }
 
+function isUsEquityVenue(venue: string): boolean {
+  return US_EQUITY_VENUES.includes(venue as (typeof US_EQUITY_VENUES)[number]);
+}
+
+function securityInstrumentIdForVenue(
+  venue: string,
+  instrumentId: string,
+): string {
+  if (venue === "NXT" && instrumentId.startsWith("NXT:")) {
+    return `KRX:${instrumentId.slice("NXT:".length)}`;
+  }
+  if (venue === "CONSOLIDATED" && instrumentId.startsWith("CONSOLIDATED:")) {
+    return `KRX:${instrumentId.slice("CONSOLIDATED:".length)}`;
+  }
+  return instrumentId;
+}
+
+export function resolveDesktopTradingPhase(input: {
+  readonly venue: string;
+  readonly session: DesktopMarketSession;
+  readonly providerTime: string | null;
+}): DesktopTradingPhase {
+  const { venue, session, providerTime } = input;
+  if (isUsEquityVenue(venue)) {
+    return session === "PRE" || session === "REGULAR" || session === "AFTER"
+      ? "REGULAR_CONTINUOUS"
+      : "CLOSED";
+  }
+  if (venue === "NXT" || venue === "CONSOLIDATED") {
+    return session === "PRE" || session === "REGULAR" || session === "AFTER"
+      ? "REGULAR_CONTINUOUS"
+      : "CLOSED";
+  }
+  if (/^\d{6}$/.test(providerTime ?? "")) {
+    const time = providerTime ?? "";
+    if (time >= "083000" && time < "090000") return "PREOPEN_AUCTION";
+    if (time >= "090000" && time < "152000") return "REGULAR_CONTINUOUS";
+    if (time >= "152000" && time <= "153000") return "CLOSING_AUCTION";
+    if (time >= "154000" && time <= "180000") return "AFTER_HOURS_AUCTION";
+    return "CLOSED";
+  }
+  if (session === "PRE") return "PREOPEN_AUCTION";
+  if (session === "REGULAR") return "REGULAR_CONTINUOUS";
+  if (session === "AFTER") return "AFTER_HOURS_AUCTION";
+  return "CLOSED";
+}
+
+function desktopTradingPhaseLabel(phase: DesktopTradingPhase): string {
+  switch (phase) {
+    case "PREOPEN_AUCTION":
+      return "장전 동시호가";
+    case "REGULAR_CONTINUOUS":
+      return "연속매매";
+    case "VI_PAUSED":
+      return "VI 단일가";
+    case "CLOSING_AUCTION":
+      return "장마감 동시호가";
+    case "AFTER_HOURS_AUCTION":
+      return "시간외 단일가";
+    case "CLOSED":
+      return "장마감";
+  }
+}
+
+function desktopPaperFillTradingPhase(
+  phase: DesktopTradingPhase,
+): DesktopTradingPhase {
+  return phase === "CLOSED" || phase === "VI_PAUSED"
+    ? phase
+    : "REGULAR_CONTINUOUS";
+}
+
 export function isDesktopPaperMarketExecutable(
   market: Pick<
     DesktopMarketProjection,
@@ -605,6 +703,7 @@ export function isDesktopPaperMarketExecutable(
     | "freshness"
     | "venue"
     | "session"
+    | "tradingPhase"
     | "orderBookReceivedAt"
     | "tradeReceivedAt"
     | "bids"
@@ -612,24 +711,43 @@ export function isDesktopPaperMarketExecutable(
   >,
   nowMs = Date.now(),
 ): boolean {
-  const isUsVenue = ["NASDAQ", "NYSE", "AMEX"].includes(market.venue);
-  const hasFreshBook = isRecentProviderEvent(
+  const isUsVenue = isUsEquityVenue(market.venue);
+  const isExtendedOrAuctionSession =
+    market.session === "PRE" ||
+    market.session === "AFTER" ||
+    market.tradingPhase !== "REGULAR_CONTINUOUS";
+  const executableBookAgeMs =
+    isUsVenue || market.venue === "NXT" || isExtendedOrAuctionSession
+      ? 60_000
+      : MAX_EXECUTION_MARKET_AGE_MS;
+  const hasFreshLiveBook = isRecentProviderEvent(
     market.orderBookReceivedAt,
     nowMs,
-    isUsVenue ? 60_000 : MAX_EXECUTION_MARKET_AGE_MS,
+    executableBookAgeMs,
+  );
+  const hasFreshSnapshotBook = isRecentProviderEvent(
+    market.orderBookReceivedAt,
+    nowMs,
+    60_000,
   );
   const hasFreshTrade = isRecentProviderEvent(market.tradeReceivedAt, nowMs);
-  return (
-    market.mode === "KIS_READ_ONLY" &&
+  const canUseBookOnly =
+    isUsVenue ||
+    market.venue === "NXT" ||
+    isExtendedOrAuctionSession;
+  const hasLiveExecutableMarket =
     market.connectionState === "LIVE" &&
     market.freshness === "live" &&
-    (market.session === "REGULAR" ||
-      (market.venue === "NXT" &&
-        (market.session === "PRE" || market.session === "AFTER")) ||
-      (isUsVenue &&
-        (market.session === "PRE" || market.session === "AFTER"))) &&
-    hasFreshBook &&
-    (isUsVenue || hasFreshTrade) &&
+    hasFreshLiveBook &&
+    (canUseBookOnly || hasFreshTrade);
+  const hasSnapshotExecutableMarket =
+    market.connectionState !== "DISABLED" &&
+    market.freshness === "stale" &&
+    hasFreshSnapshotBook;
+  return (
+    market.mode === "KIS_READ_ONLY" &&
+    market.tradingPhase !== "CLOSED" &&
+    (hasLiveExecutableMarket || hasSnapshotExecutableMarket) &&
     market.bids.length > 0 &&
     market.asks.length > 0
   );
@@ -701,9 +819,15 @@ export function resolveDesktopMarketSession(
   venue = "KRX",
 ): DesktopMarketSession {
   if (
-    (venue === "NXT" || ["NASDAQ", "NYSE", "AMEX"].includes(venue)) &&
+    (venue === "NXT" ||
+      venue === "CONSOLIDATED" ||
+      ["NASDAQ", "NYSE", "AMEX"].includes(venue)) &&
     tradeSession !== null
   ) return tradeSession;
+  if (venue === "CONSOLIDATED") {
+    return consolidatedSessionFromProviderTime(bookProviderTime ?? "");
+  }
+  if (venue === "NXT") return nxtSessionFromProviderTime(bookProviderTime ?? "");
   if (["NASDAQ", "NYSE", "AMEX"].includes(venue)) return "UNKNOWN";
   const bookSession = domesticSessionFromProviderTime(bookProviderTime ?? "");
   if (tradeSession === null) return bookSession;
@@ -721,19 +845,27 @@ function toDesktopMarketProjection(
   const book = projection.orderBook;
   const identityVenue = projection.instrumentId.split(":")[0] ?? "KRX";
   const projectedVenue = book?.venue ?? tick?.venue ?? identityVenue;
+  const instrumentId = securityInstrumentIdForVenue(
+    projectedVenue,
+    projection.instrumentId,
+  );
   const session = resolveDesktopMarketSession(
     book?.providerTime ?? null,
     tick?.session ?? null,
     projectedVenue,
   );
+  const providerTime = book?.providerTime ?? tick?.providerTime ?? null;
+  const tradingPhase = resolveDesktopTradingPhase({
+    venue: projectedVenue,
+    session,
+    providerTime,
+  });
   return {
     schemaVersion: 1,
-    instrumentId: projection.instrumentId,
-    symbol: projection.instrumentId.split(":")[1] ?? "",
+    instrumentId,
+    symbol: instrumentId.split(":")[1] ?? "",
     venue: projectedVenue,
-    currency: ["NASDAQ", "NYSE", "AMEX"].includes(projectedVenue)
-      ? "USD"
-      : "KRW",
+    currency: isUsEquityVenue(projectedVenue) ? "USD" : "KRW",
     mode: "KIS_READ_ONLY",
     connectionState: connectionState(projection),
     freshness:
@@ -743,10 +875,12 @@ function toDesktopMarketProjection(
           ? "stale"
           : "offline",
     session,
+    tradingPhase,
     price: tick?.price ?? null,
     change: tick?.change ?? null,
     changeRate: tick?.changeRate ?? null,
     executionStrength: tick?.executionStrength ?? null,
+    lastTradeQuantity: tick?.quantity ?? null,
     cumulativeVolume: tick?.cumulativeVolume ?? null,
     cumulativeTurnover: tick?.cumulativeTurnover ?? null,
     openPrice: null,
@@ -756,7 +890,7 @@ function toDesktopMarketProjection(
     asks: book?.asks ?? [],
     totalBidQuantity: book?.totalBidQuantity ?? null,
     totalAskQuantity: book?.totalAskQuantity ?? null,
-    providerTime: book?.providerTime ?? tick?.providerTime ?? null,
+    providerTime,
     receivedAt: projection.lastReceivedAt,
     orderBookReceivedAt: projection.lastOrderBookReceivedAt,
     tradeReceivedAt: projection.lastTradeReceivedAt,
@@ -765,8 +899,140 @@ function toDesktopMarketProjection(
     sequence: sequence.toString(),
     statusMessage:
       projection.lastError === null
-        ? `KIS 읽기 전용 · ${projection.coverage}`
+        ? `KIS 읽기 전용 · ${projection.coverage} · ${desktopTradingPhaseLabel(tradingPhase)}`
         : `KIS 읽기 전용 · ${projection.lastError.code}`,
+  };
+}
+
+type DomesticVenue = "KRX" | "NXT" | "CONSOLIDATED";
+type DesktopBookLevel = DesktopMarketProjection["bids"][number];
+
+function isDomesticVenue(venue: string): venue is DomesticVenue {
+  return venue === "KRX" || venue === "NXT" || venue === "CONSOLIDATED";
+}
+
+function domesticPaperVenue(venue: DomesticVenue): "KRX" | "NXT" {
+  return venue === "NXT" ? "NXT" : "KRX";
+}
+
+function newerIso(left: string | null, right: string | null): string | null {
+  if (left === null) return right;
+  if (right === null) return left;
+  return Date.parse(left) >= Date.parse(right) ? left : right;
+}
+
+function newestProjection(
+  left: DesktopMarketProjection | null,
+  right: DesktopMarketProjection | null,
+): DesktopMarketProjection | null {
+  if (left === null) return right;
+  if (right === null) return left;
+  return Date.parse(left.receivedAt ?? "") >= Date.parse(right.receivedAt ?? "")
+    ? left
+    : right;
+}
+
+function mergeDomesticLevels(
+  left: readonly DesktopBookLevel[],
+  right: readonly DesktopBookLevel[],
+  direction: "ASC" | "DESC",
+): DesktopBookLevel[] {
+  const byPrice = new Map<string, bigint>();
+  for (const level of [...left, ...right]) {
+    byPrice.set(
+      level.price,
+      (byPrice.get(level.price) ?? 0n) + BigInt(level.quantity),
+    );
+  }
+  return [...byPrice.entries()]
+    .sort(([leftPrice], [rightPrice]) =>
+      direction === "ASC"
+        ? Number(leftPrice) - Number(rightPrice)
+        : Number(rightPrice) - Number(leftPrice),
+    )
+    .slice(0, 10)
+    .map(([price, quantity]) => ({
+      price,
+      quantity: quantity.toString(),
+    }));
+}
+
+function sumQuantities(levels: readonly DesktopBookLevel[]): string {
+  return levels
+    .reduce((sum, level) => sum + BigInt(level.quantity), 0n)
+    .toString();
+}
+
+function integratedDomesticMarketProjection(
+  krx: DesktopMarketProjection | null,
+  nxt: DesktopMarketProjection | null,
+  consolidated: DesktopMarketProjection | null,
+  sequence: bigint,
+): DesktopMarketProjection | null {
+  if (consolidated !== null) {
+    return {
+      ...consolidated,
+      instrumentId: `KRX:${consolidated.symbol}`,
+      venue: "KRX",
+      currency: "KRW",
+      sequence: sequence.toString(),
+      statusMessage:
+        "KIS 읽기 전용 · 국내 통합 호가(KRX/NXT) · 공급자 통합 채널",
+    };
+  }
+  const primary = newestProjection(krx, nxt);
+  if (primary === null) return null;
+  const latestTrade = newestProjection(
+    krx?.tradeReceivedAt !== null ? krx : null,
+    nxt?.tradeReceivedAt !== null ? nxt : null,
+  );
+  const latestBook = newestProjection(
+    krx?.orderBookReceivedAt !== null ? krx : null,
+    nxt?.orderBookReceivedAt !== null ? nxt : null,
+  );
+  const asks = mergeDomesticLevels(krx?.asks ?? [], nxt?.asks ?? [], "ASC");
+  const bids = mergeDomesticLevels(krx?.bids ?? [], nxt?.bids ?? [], "DESC");
+  return {
+    ...primary,
+    instrumentId: `KRX:${primary.symbol}`,
+    venue: "KRX",
+    currency: "KRW",
+    price: latestTrade?.price ?? primary.price,
+    change: latestTrade?.change ?? primary.change,
+    changeRate: latestTrade?.changeRate ?? primary.changeRate,
+    executionStrength:
+      latestTrade?.executionStrength ?? primary.executionStrength,
+    cumulativeVolume:
+      latestTrade?.cumulativeVolume ?? primary.cumulativeVolume,
+    cumulativeTurnover:
+      latestTrade?.cumulativeTurnover ?? primary.cumulativeTurnover,
+    asks,
+    bids,
+    totalAskQuantity: sumQuantities(asks),
+    totalBidQuantity: sumQuantities(bids),
+    providerTime: latestBook?.providerTime ?? latestTrade?.providerTime ?? null,
+    receivedAt: newerIso(krx?.receivedAt ?? null, nxt?.receivedAt ?? null),
+    orderBookReceivedAt: newerIso(
+      krx?.orderBookReceivedAt ?? null,
+      nxt?.orderBookReceivedAt ?? null,
+    ),
+    tradeReceivedAt: newerIso(
+      krx?.tradeReceivedAt ?? null,
+      nxt?.tradeReceivedAt ?? null,
+    ),
+    orderBookOccurredAt: newerIso(
+      krx?.orderBookOccurredAt ?? null,
+      nxt?.orderBookOccurredAt ?? null,
+    ),
+    tradeOccurredAt: newerIso(
+      krx?.tradeOccurredAt ?? null,
+      nxt?.tradeOccurredAt ?? null,
+    ),
+    session: primary.session,
+    tradingPhase: primary.tradingPhase,
+    sequence: sequence.toString(),
+    statusMessage:
+      "KIS 읽기 전용 · 국내 통합 호가(KRX/NXT) · 로컬 모의 체결",
   };
 }
 
@@ -781,10 +1047,12 @@ function initialMarket(symbol: string): DesktopMarketProjection {
     connectionState: "DISABLED",
     freshness: "offline",
     session: "UNKNOWN",
+    tradingPhase: "CLOSED",
     price: null,
     change: null,
     changeRate: null,
     executionStrength: null,
+    lastTradeQuantity: null,
     cumulativeVolume: null,
     cumulativeTurnover: null,
     openPrice: null,
@@ -1029,6 +1297,24 @@ function validatePaperRequest(value: unknown): DesktopPaperOrderRequest {
     throw new Error("Invalid paper-order request");
   }
   return request as DesktopPaperOrderRequest;
+}
+
+function validatePaperCancelRequest(value: unknown): DesktopPaperCancelRequest {
+  if (typeof value !== "object" || value === null) {
+    throw new Error("Invalid paper-cancel request");
+  }
+  const request = value as Partial<DesktopPaperCancelRequest>;
+  if (
+    typeof request.requestId !== "string" ||
+    !/^[A-Za-z0-9._:-]{1,128}$/.test(request.requestId) ||
+    typeof request.clientOrderId !== "string" ||
+    !/^[A-Za-z0-9._:-]{1,128}$/.test(request.clientOrderId) ||
+    typeof request.instrumentId !== "string" ||
+    !/^(?:KRX:[0-9A-Z]{6,7}|(?:NASDAQ|NYSE|AMEX):[A-Z0-9.-]{1,20})$/.test(request.instrumentId)
+  ) {
+    throw new Error("Invalid paper-cancel request");
+  }
+  return request as DesktopPaperCancelRequest;
 }
 
 const MARKET_CONTEXT_DESCRIPTORS = [
@@ -1314,6 +1600,12 @@ export class DesktopRuntime {
     | { readonly projection: DesktopMarketCalendarProjection; readonly at: number }
     | null = null;
   readonly #streams = new Set<DomesticKisLiveStream>();
+  readonly #domesticVenueMarkets = new Map<
+    DomesticVenue,
+    DesktopMarketProjection
+  >();
+  #domesticRestFallbackTimer: NodeJS.Timeout | null = null;
+  #domesticRestFallbackInFlight = false;
   #marketConnectionGeneration = 0;
   #marketSequence = 0n;
   #lastProcessedTradeIdentity: string | null = null;
@@ -1376,6 +1668,11 @@ export class DesktopRuntime {
       fetchedAt: null,
       statusMessage: message,
     });
+    if (this.#usExchange !== null) {
+      return unavailable(
+        "미국 종목은 국내 투자자·프로그램 수급 대상이 아닙니다. 미국 수급 provider 연결 전까지 표시하지 않습니다.",
+      );
+    }
     const flowValue = (participant: "INDIVIDUAL" | "FOREIGN" | "INSTITUTION" | "PROGRAM", value: { sellQuantity: string; buyQuantity: string; netBuyQuantity: string; sellAmount: string; buyAmount: string; netBuyAmount: string }) => ({ participant, ...value });
     const calendarDate = (value: string): string =>
       /^\d{8}$/.test(value)
@@ -1385,13 +1682,10 @@ export class DesktopRuntime {
       /^\d{6}$/.test(value)
         ? `${value.slice(0, 2)}:${value.slice(2, 4)}:${value.slice(4, 6)}`
         : value;
-    const masterResult = this.#usExchange === null
-      ? await this.#instrumentMaster.search(symbol, 1).catch(() => null)
-      : null;
+    const masterResult = await this.#instrumentMaster.search(symbol, 1).catch(() => null);
     const master = masterResult?.items[0];
     let krxFallbackReason: string | null = null;
     if (
-      this.#usExchange === null &&
       master?.standardCode !== undefined &&
       /^KR[0-9A-Z]{10}$/.test(master.standardCode)
     ) {
@@ -1466,7 +1760,7 @@ export class DesktopRuntime {
       } catch (error) {
         krxFallbackReason = safeStatusMessage(error);
       }
-    } else if (this.#usExchange === null) {
+    } else {
       krxFallbackReason = "KRX 통계 CSV 조회에 필요한 표준코드(ISIN)를 종목 master에서 찾지 못했습니다.";
     }
     let credentials;
@@ -2912,6 +3206,124 @@ export class DesktopRuntime {
     return this.#connectRequest;
   }
 
+  #clearDomesticRestFallbackPolling(): void {
+    if (this.#domesticRestFallbackTimer !== null) {
+      clearInterval(this.#domesticRestFallbackTimer);
+      this.#domesticRestFallbackTimer = null;
+    }
+    this.#domesticRestFallbackInFlight = false;
+  }
+
+  #startDomesticRestFallbackPolling(input: {
+    readonly symbol: string;
+    readonly rest: KisRestClient;
+    readonly isCurrentConnection: () => boolean;
+  }): void {
+    this.#clearDomesticRestFallbackPolling();
+    const poll = async () => {
+      if (
+        this.#domesticRestFallbackInFlight ||
+        !input.isCurrentConnection()
+      ) {
+        return;
+      }
+      if (
+        isRecentProviderEvent(
+          this.#market.orderBookReceivedAt,
+          Date.now(),
+          DOMESTIC_REST_FALLBACK_WS_FRESH_MS,
+        ) &&
+        this.#market.freshness === "live"
+      ) {
+        return;
+      }
+      this.#domesticRestFallbackInFlight = true;
+      try {
+        const [quote, orderBook] = await Promise.all([
+          input.rest.getDomesticCurrentPrice(input.symbol),
+          input.rest.getDomesticOrderBook(input.symbol),
+        ]);
+        if (!input.isCurrentConnection()) return;
+        const hasOrderBook =
+          orderBook.providerTime !== "000000" &&
+          orderBook.bids.length + orderBook.asks.length > 0;
+        if (hasOrderBook) {
+          this.#marketSnapshots.saveDomesticOrderBook({
+            instrumentId: orderBook.instrumentId,
+            venue: orderBook.venue,
+            bids: [...orderBook.bids],
+            asks: [...orderBook.asks],
+            totalBidQuantity: orderBook.totalBidQuantity,
+            totalAskQuantity: orderBook.totalAskQuantity,
+            providerTime: orderBook.providerTime,
+            providerReceivedAt: orderBook.receivedAt,
+          });
+          this.#lastOrderBookSnapshotWriteAt = Date.now();
+        }
+        const providerTime = hasOrderBook
+          ? orderBook.providerTime
+          : this.#market.providerTime;
+        const session = domesticSessionFromProviderTime(providerTime ?? "");
+        const tradingPhase = resolveDesktopTradingPhase({
+          venue: "KRX",
+          session,
+          providerTime,
+        });
+        this.#marketSequence += 1n;
+        this.#setMarket({
+          ...this.#market,
+          mode: "KIS_READ_ONLY",
+          instrumentId: quote.instrumentId,
+          symbol: input.symbol,
+          venue: "KRX",
+          currency: "KRW",
+          connectionState:
+            this.#market.connectionState === "LIVE" ? "LIVE" : "STALE",
+          freshness: "stale",
+          session,
+          tradingPhase,
+          price: quote.price,
+          change: quote.change,
+          changeRate: quote.changeRate,
+          cumulativeVolume: quote.cumulativeVolume,
+          cumulativeTurnover: quote.cumulativeTurnover,
+          openPrice: quote.openPrice,
+          highPrice: quote.highPrice,
+          lowPrice: quote.lowPrice,
+          bids: hasOrderBook ? orderBook.bids : this.#market.bids,
+          asks: hasOrderBook ? orderBook.asks : this.#market.asks,
+          totalBidQuantity: hasOrderBook
+            ? orderBook.totalBidQuantity
+            : this.#market.totalBidQuantity,
+          totalAskQuantity: hasOrderBook
+            ? orderBook.totalAskQuantity
+            : this.#market.totalAskQuantity,
+          providerTime,
+          receivedAt: quote.receivedAt,
+          orderBookReceivedAt: hasOrderBook
+            ? orderBook.receivedAt
+            : this.#market.orderBookReceivedAt,
+          orderBookOccurredAt: hasOrderBook
+            ? orderBook.receivedAt
+            : this.#market.orderBookOccurredAt,
+          sequence: this.#marketSequence.toString(),
+          statusMessage: hasOrderBook
+            ? "KIS REST 호가 fallback 갱신 · WebSocket 실시간 갱신 대기"
+            : "KIS REST 현재가 fallback 갱신 · 공급자 호가 잔량 미수신",
+        });
+      } catch {
+        // WebSocket remains the primary transport. A polling miss must not
+        // tear down the active read-only market connection.
+      } finally {
+        this.#domesticRestFallbackInFlight = false;
+      }
+    };
+    this.#domesticRestFallbackTimer = setInterval(
+      () => void poll(),
+      DOMESTIC_REST_FALLBACK_POLL_INTERVAL_MS,
+    );
+  }
+
   public async selectInstrument(
     rawSymbol: unknown,
   ): Promise<DesktopMarketProjection> {
@@ -2933,6 +3345,7 @@ export class DesktopRuntime {
     this.#marketSequence = 0n;
     this.#lastProcessedTradeIdentity = null;
     this.#lastOrderBookSnapshotWriteAt = 0;
+    this.#domesticVenueMarkets.clear();
     const usVenue = usExchange === "NAS" ? "NASDAQ" : usExchange === "NYS" ? "NYSE" : usExchange === "AMS" ? "AMEX" : null;
     this.#setMarket(usVenue === null ? initialMarket(symbol) : initialUsMarket(symbol, usVenue));
     this.#setChart(usVenue === null ? initialChart(symbol) : {
@@ -2991,6 +3404,7 @@ export class DesktopRuntime {
     const isCurrentConnection = () =>
       this.#symbol === symbol &&
       this.#marketConnectionGeneration === generation;
+    this.#clearDomesticRestFallbackPolling();
     const config = loadRuntimeConfig();
     const usExchange = this.#usExchange;
     const dataEnvironment = usExchange === null ? readOnlyMarketDataEnvironment(config) : "prod";
@@ -3042,6 +3456,12 @@ export class DesktopRuntime {
         ]);
         if (!isCurrentConnection()) return this.#market;
         const venue = usExchange === "NAS" ? "NASDAQ" : usExchange === "NYS" ? "NYSE" : "AMEX";
+        const session = resolveUsEquitySession(new Date());
+        const tradingPhase = resolveDesktopTradingPhase({
+          venue,
+          session,
+          providerTime: snapshot.providerTime,
+        });
         this.#marketSequence += 1n;
         this.#setMarket({
           ...this.#market,
@@ -3059,10 +3479,15 @@ export class DesktopRuntime {
           providerTime: snapshot.providerTime,
           receivedAt: snapshot.receivedAt,
           orderBookReceivedAt: snapshot.receivedAt,
+          orderBookOccurredAt: snapshot.receivedAt,
+          tradeReceivedAt: snapshot.receivedAt,
+          tradeOccurredAt: snapshot.receivedAt,
+          session,
+          tradingPhase,
           freshness: "stale",
           sequence: this.#marketSequence.toString(),
           statusMessage: snapshot.bids.length > 0 || snapshot.asks.length > 0
-            ? "KIS 미국 REST 실제 1호가 · WebSocket 실시간 갱신 대기"
+            ? `KIS 미국 REST 실제 1호가 · ${desktopTradingPhaseLabel(tradingPhase)} · WebSocket 실시간 갱신 대기`
             : "KIS 미국 현재가 수신 · 공급자 호가 잔량 미수신 · WebSocket 갱신 대기",
         });
         const stream = new DomesticKisLiveStream({
@@ -3121,7 +3546,11 @@ export class DesktopRuntime {
         `KRX:${symbol}`,
         "NXT",
       );
+      const currentKrxSession = domesticSessionFromProviderTime(
+        koreanClockTime(),
+      );
       const useTodayNxtClose =
+        (currentKrxSession === "PRE" || currentKrxSession === "AFTER") &&
         restoredNxtTrade?.providerDate === koreanCalendarDate() &&
         restoredNxtTrade.providerTime >= "154000" &&
         restoredNxtBook !== null;
@@ -3176,6 +3605,11 @@ export class DesktopRuntime {
           : (restoredOrderBook?.providerReceivedAt ?? null),
         orderBookOccurredAt: null,
         session: domesticSessionFromProviderTime(displayedProviderTime ?? ""),
+        tradingPhase: resolveDesktopTradingPhase({
+          venue: useTodayNxtClose ? "NXT" : "KRX",
+          session: domesticSessionFromProviderTime(displayedProviderTime ?? ""),
+          providerTime: displayedProviderTime,
+        }),
         freshness: "stale",
         receivedAt: quote.receivedAt,
         sequence: this.#marketSequence.toString(),
@@ -3187,15 +3621,27 @@ export class DesktopRuntime {
             ? `SQLite 최종 실제 호가 · ${restoredOrderBook.providerReceivedAt} · WebSocket 갱신 대기`
             : "KIS 현재가 수신 · 장외 빈 호가 · 저장된 최종 실제 호가 없음",
       });
+      this.#startDomesticRestFallbackPolling({
+        symbol,
+        rest,
+        isCurrentConnection,
+      });
 
       const shouldProjectVenue = (projection: MarketLiveProjection): boolean => {
         const venue = projection.orderBook?.venue ?? projection.trade?.venue;
-        const session = projection.trade?.session ?? "UNKNOWN";
+        const session = resolveDesktopMarketSession(
+          projection.orderBook?.providerTime ?? projection.trade?.providerTime ?? null,
+          projection.trade?.session ?? null,
+          venue ?? "KRX",
+        );
+        if (venue === "CONSOLIDATED") {
+          return session === "PRE" || session === "REGULAR" || session === "AFTER";
+        }
         return venue === "NXT"
-          ? session === "PRE" || session === "AFTER"
+          ? session === "PRE" || session === "REGULAR" || session === "AFTER"
           : session === "REGULAR" || session === "UNKNOWN";
       };
-      const streams = (["KRX", "NXT"] as const).map(
+      const streams = (["CONSOLIDATED", "KRX", "NXT"] as const).map(
         (venue) =>
           new DomesticKisLiveStream({
             environment: dataEnvironment,
@@ -3242,6 +3688,7 @@ export class DesktopRuntime {
   public async disconnectMarket(): Promise<DesktopMarketProjection> {
     this.#marketConnectionGeneration += 1;
     this.#connectRequest = null;
+    this.#clearDomesticRestFallbackPolling();
     const streams = [...this.#streams];
     this.#streams.clear();
     await Promise.all(streams.map((stream) => stream.stop()));
@@ -3299,7 +3746,12 @@ export class DesktopRuntime {
         lastTradeSequence: null,
         cursorScope: null,
       },
-      policy: desktopPaperPolicy(order.venue),
+      policy: desktopPaperPolicy(
+        order.venue,
+        this.#market.freshness === "stale"
+          ? 60_000
+          : MAX_EXECUTION_MARKET_AGE_MS,
+      ),
       evaluatedAt: now,
     });
     if (execution.status === "REJECTED") {
@@ -3352,6 +3804,105 @@ export class DesktopRuntime {
     }
   }
 
+  public cancelPaperOrder(rawRequest: unknown): DesktopPaperOrderResult {
+    let request: DesktopPaperCancelRequest;
+    try {
+      request = validatePaperCancelRequest(rawRequest);
+    } catch {
+      return this.#rejectedResult("invalid-cancel-request", "INVALID_REQUEST");
+    }
+    if (request.instrumentId !== this.#market.instrumentId) {
+      return this.#rejectedResult(
+        request.requestId,
+        "INSTRUMENT_SCOPE_MISMATCH",
+      );
+    }
+    const stored = this.#papers.getPaperOrder(
+      ACCOUNT_ID,
+      request.clientOrderId,
+    );
+    const openOrder = stored === null ? null : this.#restoreOpenOrder(stored);
+    if (
+      stored === null ||
+      openOrder === null ||
+      stored.instrumentId !== request.instrumentId ||
+      BigInt(stored.remainingQuantity) <= 0n
+    ) {
+      return this.#rejectedResult(request.requestId, "ORDER_NOT_OPEN");
+    }
+
+    const now = new Date().toISOString();
+    const status =
+      BigInt(stored.filledQuantity) > 0n
+        ? ("PARTIALLY_FILLED_CANCELLED" as const)
+        : ("CANCELLED" as const);
+    const cancelledQuantity =
+      BigInt(stored.cancelledQuantity) + BigInt(stored.remainingQuantity);
+    const execution = PaperExecutionPlanSchema.parse({
+      clientOrderId: stored.clientOrderId,
+      status,
+      rejectionCode: null,
+      fills: [],
+      orderQuantity: stored.quantity,
+      newlyFilledQuantity: "0",
+      filledQuantity: stored.filledQuantity,
+      remainingQuantity: "0",
+      cancelledQuantity: cancelledQuantity.toString(),
+      grossNotional: "0",
+      vwap: null,
+      plannedEvents: [
+        {
+          type: "ORDER_CANCEL_REQUESTED",
+          clientOrderId: stored.clientOrderId,
+          cancelledQuantity: stored.remainingQuantity,
+          owner: "DB_TRANSACTION_OWNER",
+        },
+      ],
+      nextState: {
+        seenClientOrderIds: [],
+        lastOrderBookSequence: null,
+        lastTradeSequence: null,
+        cursorScope: null,
+      },
+      commitOwner: "DB_TRANSACTION_OWNER",
+    });
+    try {
+      const commitId = stableLocalId("cancel", [
+        request.requestId,
+        stored.clientOrderId,
+      ]);
+      this.#papers.commitPaperExecution({
+        commitId,
+        order: openOrder.order,
+        execution,
+        reservedCashMinor: "0",
+        cashLedgerEntries: [],
+        occurredAt: now,
+      });
+      this.#papers.deleteAdvancedQueueState(ACCOUNT_ID, stored.clientOrderId);
+      const account = this.#accountProjection();
+      this.#emitAccount(account);
+      return {
+        schemaVersion: 1,
+        requestId: request.requestId,
+        accepted: true,
+        status,
+        rejectionCode: null,
+        account,
+        market: this.#market,
+      };
+    } catch (error) {
+      const code =
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        typeof error.code === "string"
+          ? error.code
+          : "PERSISTENCE_REJECTED";
+      return this.#rejectedResult(request.requestId, code);
+    }
+  }
+
   public applyReadOnlyMarketProjection(
     projection: MarketLiveProjection,
   ): DesktopMarketProjection {
@@ -3360,18 +3911,40 @@ export class DesktopRuntime {
       projection,
       this.#marketSequence,
     );
+    if (
+      isDomesticVenue(nextProjection.venue) &&
+      nextProjection.instrumentId === this.#market.instrumentId
+    ) {
+      if (
+        isDomesticVenue(this.#market.venue) &&
+        !this.#domesticVenueMarkets.has(this.#market.venue) &&
+        this.#market.bids.length + this.#market.asks.length > 0
+      ) {
+        this.#domesticVenueMarkets.set(this.#market.venue, this.#market);
+      }
+      this.#domesticVenueMarkets.set(nextProjection.venue, nextProjection);
+    }
+    const projectedMarket =
+      isDomesticVenue(nextProjection.venue)
+        ? (integratedDomesticMarketProjection(
+            this.#domesticVenueMarkets.get("KRX") ?? null,
+            this.#domesticVenueMarkets.get("NXT") ?? null,
+            this.#domesticVenueMarkets.get("CONSOLIDATED") ?? null,
+            this.#marketSequence,
+          ) ?? nextProjection)
+        : nextProjection;
     const preserveLastOrderBook =
-      nextProjection.instrumentId === this.#market.instrumentId &&
-      nextProjection.bids.length === 0 &&
-      nextProjection.asks.length === 0 &&
+      projectedMarket.instrumentId === this.#market.instrumentId &&
+      projectedMarket.bids.length === 0 &&
+      projectedMarket.asks.length === 0 &&
       this.#market.bids.length > 0 &&
       this.#market.asks.length > 0;
     const preserveLastTrade =
-      nextProjection.instrumentId === this.#market.instrumentId &&
-      nextProjection.price === null &&
+      projectedMarket.instrumentId === this.#market.instrumentId &&
+      projectedMarket.price === null &&
       this.#market.price !== null;
     const desktopProjection = {
-      ...nextProjection,
+      ...projectedMarket,
       openPrice: this.#market.openPrice,
       highPrice: this.#market.highPrice,
       lowPrice: this.#market.lowPrice,
@@ -3395,13 +3968,17 @@ export class DesktopRuntime {
             totalBidQuantity: this.#market.totalBidQuantity,
             totalAskQuantity: this.#market.totalAskQuantity,
             providerTime:
-              nextProjection.providerTime ?? this.#market.providerTime,
+              projectedMarket.providerTime ?? this.#market.providerTime,
             orderBookReceivedAt: this.#market.orderBookReceivedAt,
             orderBookOccurredAt: this.#market.orderBookOccurredAt,
             session:
-              nextProjection.session === "UNKNOWN"
+              projectedMarket.session === "UNKNOWN"
                 ? this.#market.session
-                : nextProjection.session,
+                : projectedMarket.session,
+            tradingPhase:
+              projectedMarket.session === "UNKNOWN"
+                ? this.#market.tradingPhase
+                : projectedMarket.tradingPhase,
             freshness: "stale" as const,
           }
         : {}),
@@ -3419,11 +3996,16 @@ export class DesktopRuntime {
       liveTrade !== null &&
       liveTrade.providerTime !== null &&
       projection.lastTradeReceivedAt !== null &&
-      (liveTrade.venue === "KRX" || liveTrade.venue === "NXT")
+      (liveTrade.venue === "KRX" ||
+        liveTrade.venue === "NXT" ||
+        liveTrade.venue === "CONSOLIDATED")
     ) {
       this.#marketSnapshots.saveDomesticTrade({
-        instrumentId: `KRX:${this.#symbol}`,
-        venue: liveTrade.venue,
+        instrumentId: securityInstrumentIdForVenue(
+          liveTrade.venue,
+          liveTrade.instrumentId,
+        ),
+        venue: domesticPaperVenue(liveTrade.venue),
         price: liveTrade.price,
         change: liveTrade.change,
         changeRate: liveTrade.changeRate,
@@ -3437,13 +4019,18 @@ export class DesktopRuntime {
       liveBook.providerTime !== null &&
       liveBook.providerTime !== "000000" &&
       projection.lastOrderBookReceivedAt !== null &&
-      (liveBook.venue === "KRX" || liveBook.venue === "NXT") &&
+      (liveBook.venue === "KRX" ||
+        liveBook.venue === "NXT" ||
+        liveBook.venue === "CONSOLIDATED") &&
       liveBook.bids.length + liveBook.asks.length > 0 &&
       Date.now() - this.#lastOrderBookSnapshotWriteAt >= 1_000
     ) {
       this.#marketSnapshots.saveDomesticOrderBook({
-        instrumentId: liveBook.instrumentId,
-        venue: liveBook.venue === "NXT" ? "NXT" : "KRX",
+        instrumentId: securityInstrumentIdForVenue(
+          liveBook.venue,
+          liveBook.instrumentId,
+        ),
+        venue: domesticPaperVenue(liveBook.venue),
         bids: [...liveBook.bids],
         asks: [...liveBook.asks],
         totalBidQuantity: liveBook.totalBidQuantity,
@@ -3594,9 +4181,15 @@ export class DesktopRuntime {
     ) {
       return;
     }
+    const tickInstrumentId = securityInstrumentIdForVenue(
+      tick.venue,
+      tick.instrumentId,
+    );
+    if (!isDomesticVenue(tick.venue)) return;
+    const tickPaperVenue = domesticPaperVenue(tick.venue);
 
     const marketEventId = stableLocalId("kis-trade", [
-      tick.instrumentId,
+      tickInstrumentId,
       tick.providerDate ?? "",
       tick.providerTime ?? "",
       tick.cumulativeVolume ?? "",
@@ -3609,8 +4202,8 @@ export class DesktopRuntime {
       .listPaperOrders(ACCOUNT_ID)
       .filter(
         (stored) =>
-          stored.instrumentId === tick.instrumentId &&
-          stored.venue === tick.venue &&
+          stored.instrumentId === tickInstrumentId &&
+          stored.venue === tickPaperVenue &&
           stored.orderType === "LIMIT" &&
           ["ACCEPTED", "RESTING", "PARTIALLY_FILLED"].includes(stored.status),
       );
@@ -3619,10 +4212,15 @@ export class DesktopRuntime {
       return;
     }
 
-    const sessionKey = `KRX:${tick.providerDate}:REGULAR`;
+    const tradingPhase = resolveDesktopTradingPhase({
+      venue: tick.venue,
+      session: tick.session,
+      providerTime: tick.providerTime,
+    });
+    const sessionKey = `${tick.venue}:${tick.providerDate}:${tick.session}:${tradingPhase}`;
     const claim = this.#papers.claimPaperMarketEvent({
       accountId: ACCOUNT_ID,
-      instrumentId: tick.instrumentId,
+      instrumentId: tickInstrumentId,
       sessionKey,
       sequence: tick.cumulativeVolume,
       marketEventId,
@@ -3638,9 +4236,9 @@ export class DesktopRuntime {
       currency: this.#market.currency,
       freshness: "LIVE",
       receivedAt: tradeReceivedAt,
-      tradingPhase: "REGULAR_CONTINUOUS",
+      tradingPhase,
       sessionKey,
-      tick: { ...tick },
+      tick: { ...tick, instrumentId: tickInstrumentId },
       auction: null,
     };
 
@@ -3981,6 +4579,13 @@ export class DesktopRuntime {
 
   #canonicalBook(receivedAt: string): CanonicalOrderBookEvent {
     const providerTime = this.#market.providerTime;
+    const tradingPhase = desktopPaperFillTradingPhase(
+      this.#market.tradingPhase,
+    );
+    const snapshotOccurredAt =
+      this.#market.orderBookOccurredAt ??
+      this.#market.orderBookReceivedAt ??
+      receivedAt;
     const kstDate = new Intl.DateTimeFormat("en-CA", {
       timeZone: "Asia/Seoul",
       year: "numeric",
@@ -3995,13 +4600,8 @@ export class DesktopRuntime {
       currency: this.#market.currency,
       freshness: "LIVE",
       receivedAt: this.#market.orderBookReceivedAt ?? receivedAt,
-      tradingPhase:
-        this.#market.session === "REGULAR" ||
-        ((this.#market.venue === "NXT" || ["NASDAQ", "NYSE", "AMEX"].includes(this.#market.venue)) &&
-          (this.#market.session === "PRE" || this.#market.session === "AFTER"))
-          ? "REGULAR_CONTINUOUS"
-          : "CLOSED",
-      sessionKey: `${this.#market.venue}:${providerDate}:${this.#market.session}`,
+      tradingPhase,
+      sessionKey: `${this.#market.venue}:${providerDate}:${this.#market.session}:${tradingPhase}`,
       snapshot: {
         instrumentId: this.#market.instrumentId,
         venue: this.#market.venue,
@@ -4009,7 +4609,7 @@ export class DesktopRuntime {
         asks: [...this.#market.asks],
         totalBidQuantity: this.#market.totalBidQuantity,
         totalAskQuantity: this.#market.totalAskQuantity,
-        occurredAt: this.#market.orderBookOccurredAt,
+        occurredAt: snapshotOccurredAt,
         providerDate,
         providerTime,
         source: "KIS_WS",

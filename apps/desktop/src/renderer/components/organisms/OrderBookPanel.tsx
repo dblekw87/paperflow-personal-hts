@@ -40,6 +40,8 @@ export interface OrderBookPanelProps {
   executionStrength: string | null;
   recentTrades: readonly RecentTradeModel[];
   referenceStats: readonly OrderBookReferenceStat[];
+  upperLimitPrice?: string | null;
+  lowerLimitPrice?: string | null;
   currentDirection: PriceDirection;
   freshness: "live" | "delayed" | "stale" | "offline" | "closed" | "partial";
   dataMode?: "REAL" | "FIXTURE";
@@ -51,6 +53,7 @@ export interface OrderBookPanelProps {
   levelOrderDisabledReason: string;
   onOrderQuantityChange: (quantity: string) => void;
   onLevelOrder: (side: "BUY" | "SELL", price: string) => void;
+  onPendingOrderCancel: (clientOrderId: string) => void;
   pendingOrders?: readonly {
     readonly clientOrderId: string;
     readonly side: "BUY" | "SELL";
@@ -66,6 +69,7 @@ interface LevelRowsProps {
   canOrder: boolean;
   disabledReason: string;
   onLevelOrder: OrderBookPanelProps["onLevelOrder"];
+  onPendingOrderCancel: OrderBookPanelProps["onPendingOrderCancel"];
   executionStrength: string | null;
   recentTrades: readonly RecentTradeModel[];
   referenceStats: readonly OrderBookReferenceStat[];
@@ -78,27 +82,37 @@ function normalizedPrice(value: string): string {
   return digits.replace(/^0+(?=\d)/, "");
 }
 
-function pendingOrderLabel(
+function pendingOrderGroup(
   orders: NonNullable<OrderBookPanelProps["pendingOrders"]>,
   side: "BUY" | "SELL",
   price: string,
-): string | null {
+): { readonly label: string; readonly clientOrderId: string } | null {
   const matches = orders.filter(
     (order) =>
       order.side === side &&
       normalizedPrice(order.limitPrice) === normalizedPrice(price),
   );
   if (matches.length === 0) return null;
+  const first = matches[0];
+  if (first === undefined) return null;
   const quantities = matches.map((order) => order.remainingQuantity);
   const quantity = quantities.every((value) => value === quantities[0])
-    ? quantities[0]
+    ? (quantities[0] ?? "0")
     : quantities.reduce((sum, value) => sum + BigInt(value), 0n).toString();
-  return matches.length === 1 ? quantity ?? null : `${quantity} (${matches.length})`;
+  return {
+    label: matches.length === 1 ? quantity : `${quantity} (${matches.length})`,
+    clientOrderId: first.clientOrderId,
+  };
 }
 
 function quantityNumber(value: string): number {
   const parsed = Number(value.replaceAll(",", ""));
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function editableQuantity(value: string): string {
+  const digits = value.replace(/[^0-9]/g, "");
+  return digits.replace(/^0+(?=\d)/, "");
 }
 
 function depthStyle(
@@ -181,6 +195,35 @@ function TradeTape({
   );
 }
 
+function PriceLimitRow({
+  label,
+  price,
+  direction,
+  isUsPriceDisplay,
+}: {
+  readonly label: string;
+  readonly price: string | null | undefined;
+  readonly direction: PriceDirection;
+  readonly isUsPriceDisplay: boolean;
+}) {
+  if (price === null || price === undefined) return null;
+  return (
+    <tr className="pt-order-book__limit-row">
+      <td />
+      <td className="pt-order-book__limit-label">{label}</td>
+      <td className="pt-order-book__price pt-order-book__limit-price">
+        <PriceText
+          value={isUsPriceDisplay ? truncateUsPrice(price) : price}
+          direction={direction}
+          hideDirectionIcon
+        />
+      </td>
+      <td />
+      <td />
+    </tr>
+  );
+}
+
 function LevelRows({
   levels,
   side,
@@ -188,6 +231,7 @@ function LevelRows({
   canOrder,
   disabledReason,
   onLevelOrder,
+  onPendingOrderCancel,
   executionStrength,
   recentTrades,
   referenceStats,
@@ -196,11 +240,17 @@ function LevelRows({
 }: LevelRowsProps) {
   return levels.map((level, index) => {
     const canOrderAtLevel = canOrder && level.referenceOnly !== true;
+    const canSellAtLevel = canOrderAtLevel;
+    const canBuyAtLevel = canOrderAtLevel;
+    const sellExecutionHint =
+      side === "BID" ? "즉시체결 예상" : "매도 대기 예상";
+    const buyExecutionHint =
+      side === "ASK" ? "즉시체결 예상" : "매수 대기 예상";
     const isCurrentPrice =
       normalizedPrice(level.price) !== "" &&
       normalizedPrice(level.price) === normalizedPrice(currentPrice);
-    const sellPending = pendingOrderLabel(pendingOrders, "SELL", level.price);
-    const buyPending = pendingOrderLabel(pendingOrders, "BUY", level.price);
+    const sellPending = pendingOrderGroup(pendingOrders, "SELL", level.price);
+    const buyPending = pendingOrderGroup(pendingOrders, "BUY", level.price);
     return (
     <tr
       className={`pt-order-book__row pt-order-book__row--${side.toLowerCase()} pt-depth--${level.depthBand}${isCurrentPrice ? " pt-order-book__row--current" : ""}`}
@@ -212,12 +262,32 @@ function LevelRows({
       <td className="pt-order-book__action-cell pt-order-book__action-cell--sell">
         <button
           type="button"
-          disabled={!canOrderAtLevel}
-          title={canOrderAtLevel ? `${level.price}에 매도 · ${side === "BID" ? "즉시체결 예상" : "체결 대기 예상"}` : level.referenceOnly ? "참고 가격대는 실제 잔량이 없어 주문 근거로 사용하지 않습니다." : disabledReason}
-          aria-label={`${level.price}${isUsPriceDisplay ? "달러" : "원"} 입력 수량 매도`}
-        onClick={() => onLevelOrder("SELL", level.price)}
+          disabled={sellPending === null && !canSellAtLevel}
+          title={
+            sellPending !== null
+              ? `${level.price} 매도 대기 ${sellPending.label}주 취소`
+              : canSellAtLevel
+              ? `${level.price}에 매도 · ${sellExecutionHint}`
+              : canOrderAtLevel
+                ? `${level.price}에 매도 주문을 준비합니다.`
+              : level.referenceOnly
+                ? "참고 가격대는 실제 잔량이 없어 주문 근거로 사용하지 않습니다."
+                : disabledReason
+          }
+          aria-label={
+            sellPending !== null
+              ? `${level.price}${isUsPriceDisplay ? "달러" : "원"} 매도 대기 주문 취소`
+              : `${level.price}${isUsPriceDisplay ? "달러" : "원"} 입력 수량 매도`
+          }
+        onClick={() => {
+          if (sellPending !== null) {
+            onPendingOrderCancel(sellPending.clientOrderId);
+            return;
+          }
+          onLevelOrder("SELL", level.price);
+        }}
         className={sellPending ? "has-pending-order" : undefined}
-        >{sellPending}</button>
+        >{sellPending?.label}</button>
       </td>
       {side === "ASK" ? (
         <td
@@ -263,12 +333,32 @@ function LevelRows({
       <td className="pt-order-book__action-cell pt-order-book__action-cell--buy">
         <button
           type="button"
-          disabled={!canOrderAtLevel}
-          title={canOrderAtLevel ? `${level.price}에 매수 · ${side === "ASK" ? "즉시체결 예상" : "체결 대기 예상"}` : level.referenceOnly ? "참고 가격대는 실제 잔량이 없어 주문 근거로 사용하지 않습니다." : disabledReason}
-          aria-label={`${level.price}${isUsPriceDisplay ? "달러" : "원"} 입력 수량 매수`}
-          onClick={() => onLevelOrder("BUY", level.price)}
+          disabled={buyPending === null && !canBuyAtLevel}
+          title={
+            buyPending !== null
+              ? `${level.price} 매수 대기 ${buyPending.label}주 취소`
+              : canBuyAtLevel
+              ? `${level.price}에 매수 · ${buyExecutionHint}`
+              : canOrderAtLevel
+                ? `${level.price}에 매수 주문을 준비합니다.`
+              : level.referenceOnly
+                ? "참고 가격대는 실제 잔량이 없어 주문 근거로 사용하지 않습니다."
+                : disabledReason
+          }
+          aria-label={
+            buyPending !== null
+              ? `${level.price}${isUsPriceDisplay ? "달러" : "원"} 매수 대기 주문 취소`
+              : `${level.price}${isUsPriceDisplay ? "달러" : "원"} 입력 수량 매수`
+          }
+          onClick={() => {
+            if (buyPending !== null) {
+              onPendingOrderCancel(buyPending.clientOrderId);
+              return;
+            }
+            onLevelOrder("BUY", level.price);
+          }}
           className={buyPending ? "has-pending-order" : undefined}
-        >{buyPending}</button>
+        >{buyPending?.label}</button>
       </td>
     </tr>
     );
@@ -286,6 +376,8 @@ export function OrderBookPanel({
   executionStrength,
   recentTrades,
   referenceStats,
+  upperLimitPrice,
+  lowerLimitPrice,
   currentDirection,
   freshness,
   dataMode = "REAL",
@@ -297,8 +389,10 @@ export function OrderBookPanel({
   levelOrderDisabledReason,
   onOrderQuantityChange,
   onLevelOrder,
+  onPendingOrderCancel,
   pendingOrders = [],
 }: OrderBookPanelProps) {
+  const isUsPriceDisplay = /^(NASDAQ|NYSE|AMEX):/.test(instrumentId);
   return (
     <section
       className="pt-panel pt-order-book"
@@ -345,11 +439,18 @@ export function OrderBookPanel({
         <label className="pt-order-book__direct-quantity">
           <span>수량</span>
           <input
-            value={orderQuantity}
+            value={editableQuantity(orderQuantity)}
             inputMode="numeric"
             pattern="[0-9,]*"
             aria-label="호가 클릭 주문 수량"
-            onChange={(event) => onOrderQuantityChange(event.target.value)}
+            onFocus={(event) => {
+              if (editableQuantity(event.currentTarget.value) === "0") {
+                onOrderQuantityChange("");
+              }
+            }}
+            onChange={(event) =>
+              onOrderQuantityChange(editableQuantity(event.target.value))
+            }
           />
         </label>
       </div>
@@ -386,6 +487,12 @@ export function OrderBookPanel({
               </tr>
             </thead>
             <tbody>
+              <PriceLimitRow
+                label="상한가"
+                price={upperLimitPrice}
+                direction="positive"
+                isUsPriceDisplay={isUsPriceDisplay}
+              />
               <LevelRows
                 levels={asks}
                 side="ASK"
@@ -393,11 +500,12 @@ export function OrderBookPanel({
                 canOrder={canOrderFromLevel}
                 disabledReason={levelOrderDisabledReason}
                 onLevelOrder={onLevelOrder}
+                onPendingOrderCancel={onPendingOrderCancel}
                 executionStrength={executionStrength}
                 recentTrades={recentTrades}
                 referenceStats={referenceStats}
                 pendingOrders={pendingOrders}
-                isUsPriceDisplay={/^(NASDAQ|NYSE|AMEX):/.test(instrumentId)}
+                isUsPriceDisplay={isUsPriceDisplay}
               />
               <LevelRows
                 levels={bids}
@@ -406,11 +514,18 @@ export function OrderBookPanel({
                 canOrder={canOrderFromLevel}
                 disabledReason={levelOrderDisabledReason}
                 onLevelOrder={onLevelOrder}
+                onPendingOrderCancel={onPendingOrderCancel}
                 executionStrength={executionStrength}
                 recentTrades={recentTrades}
                 referenceStats={referenceStats}
                 pendingOrders={pendingOrders}
-                isUsPriceDisplay={/^(NASDAQ|NYSE|AMEX):/.test(instrumentId)}
+                isUsPriceDisplay={isUsPriceDisplay}
+              />
+              <PriceLimitRow
+                label="하한가"
+                price={lowerLimitPrice}
+                direction="negative"
+                isUsPriceDisplay={isUsPriceDisplay}
               />
             </tbody>
             <tfoot>
@@ -430,7 +545,7 @@ export function OrderBookPanel({
           ? "합성 호가 fixture입니다. 호가 행 클릭은 차트 미리보기에만 사용됩니다."
           : referenceOnly
             ? "KIS가 장전 잔량을 제공하지 않아 실제 현재가 기준 가격 단위만 표시합니다. 잔량은 미수신이며 주문·체결에는 사용하지 않습니다."
-          : "수량 입력 후 왼쪽 매도·오른쪽 매수 박스를 클릭하면 로컬 계좌에만 주문하며 증권사에는 전송하지 않습니다."}
+          : "수량 입력 후 왼쪽 매도·오른쪽 매수 박스를 클릭하면 로컬 계좌에만 주문하며, 숫자가 표시된 대기 주문 박스는 클릭 시 취소됩니다."}
       </p>
     </section>
   );

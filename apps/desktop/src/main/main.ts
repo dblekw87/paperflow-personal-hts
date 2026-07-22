@@ -376,6 +376,7 @@ function registerDesktopIpc(runtime: DesktopRuntimeClient): void {
     DESKTOP_CHANNELS.informationGet,
     DESKTOP_CHANNELS.informationOpenExternal,
     DESKTOP_CHANNELS.paperSubmit,
+    DESKTOP_CHANNELS.paperCancel,
   ]) {
     ipcMain.removeHandler(channel);
   }
@@ -565,6 +566,15 @@ function registerDesktopIpc(runtime: DesktopRuntimeClient): void {
         throw new Error("Untrusted renderer frame.");
       }
       return runtime.submitPaperOrder(request);
+    },
+  );
+  ipcMain.handle(
+    DESKTOP_CHANNELS.paperCancel,
+    async (event, request: unknown) => {
+      if (!isTrustedIpcSender(event)) {
+        throw new Error("Untrusted renderer frame.");
+      }
+      return runtime.cancelPaperOrder(request);
     },
   );
 }

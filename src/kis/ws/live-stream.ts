@@ -13,6 +13,7 @@ import {
   buildSubscriptionMessage,
   domesticProbeSubscriptions,
   nxtDomesticProbeSubscriptions,
+  unifiedDomesticProbeSubscriptions,
   usProbeSubscriptions,
   koreaBusinessDate,
   rawDataToText,
@@ -25,6 +26,8 @@ import {
   normalizeDomesticTrade,
   normalizeNxtOrderBook,
   normalizeNxtTrade,
+  normalizeUnifiedDomesticOrderBook,
+  normalizeUnifiedDomesticTrade,
   normalizeUsOrderBook,
   normalizeUsTrade,
 } from "./normalize.js";
@@ -34,7 +37,7 @@ export interface DomesticLiveStreamOptions {
   environment: "paper" | "prod";
   approvalKey: string;
   symbol: string;
-  venue?: "KRX" | "NXT" | "NASDAQ" | "NYSE" | "AMEX";
+  venue?: "KRX" | "NXT" | "CONSOLIDATED" | "NASDAQ" | "NYSE" | "AMEX";
   providerExchange?: "NAS" | "NYS" | "AMS";
   socketFactory?: (url: string) => WebSocket;
   onEvent?: (event: MarketLiveEvent) => void;
@@ -161,7 +164,11 @@ export class DomesticKisLiveStream {
       throw safeError("KIS_WS_CONNECTION_FAILED", false);
     }
 
-    const staleAfterMs = options.staleAfterMs ?? 5_000;
+    const defaultStaleAfterMs =
+      venue === "NXT" || venue === "CONSOLIDATED" || isUsVenue
+        ? 60_000
+        : 15_000;
+    const staleAfterMs = options.staleAfterMs ?? defaultStaleAfterMs;
     const handshakeTimeoutMs = options.handshakeTimeoutMs ?? 7_000;
     const maxAttempts = options.reconnect?.maxAttempts ?? 4;
     const baseDelayMs = options.reconnect?.baseDelayMs ?? 250;
@@ -189,8 +196,10 @@ export class DomesticKisLiveStream {
 
     this.#options = options;
     this.#subscriptions =
-      venue === "NXT"
-        ? nxtDomesticProbeSubscriptions(options.symbol)
+      venue === "CONSOLIDATED"
+        ? unifiedDomesticProbeSubscriptions(options.symbol)
+        : venue === "NXT"
+          ? nxtDomesticProbeSubscriptions(options.symbol)
         : venue !== "KRX"
           ? usProbeSubscriptions(
               options.providerExchange ?? "NAS",
@@ -199,7 +208,7 @@ export class DomesticKisLiveStream {
             )
         : domesticProbeSubscriptions(options.symbol);
     // A security keeps one portfolio identity across execution venues.
-    this.#instrumentId = `${venue === "NXT" ? "KRX" : venue}:${options.symbol}`;
+    this.#instrumentId = `${venue === "NXT" || venue === "CONSOLIDATED" ? "KRX" : venue}:${options.symbol}`;
     this.#now = options.now ?? (() => new Date());
     this.#random = options.random ?? Math.random;
     this.#staleAfterMs = staleAfterMs;
@@ -493,6 +502,7 @@ export class DomesticKisLiveStream {
     if (
       frame.trId === KIS_TR.domesticOrderBook ||
       frame.trId === KIS_TR.domesticNxtOrderBook ||
+      frame.trId === KIS_TR.domesticUnifiedOrderBook ||
       frame.trId === KIS_TR.usOrderBook
     ) {
       const snapshots =
@@ -501,8 +511,10 @@ export class DomesticKisLiveStream {
               frame,
               this.#options.venue ?? "NASDAQ",
             )
+          : frame.trId === KIS_TR.domesticUnifiedOrderBook
+          ? normalizeUnifiedDomesticOrderBook(frame, koreaBusinessDate(this.#now()))
           : frame.trId === KIS_TR.domesticNxtOrderBook
-          ? normalizeNxtOrderBook(frame, koreaBusinessDate(this.#now()))
+            ? normalizeNxtOrderBook(frame, koreaBusinessDate(this.#now()))
           : normalizeDomesticOrderBook(frame, koreaBusinessDate(this.#now()));
       for (const snapshot of snapshots) {
         const canonicalSnapshot = {
@@ -530,13 +542,16 @@ export class DomesticKisLiveStream {
     } else if (
       frame.trId === KIS_TR.domesticTrade ||
       frame.trId === KIS_TR.domesticNxtTrade ||
+      frame.trId === KIS_TR.domesticUnifiedTrade ||
       frame.trId === KIS_TR.usTrade
     ) {
       const ticks =
         frame.trId === KIS_TR.usTrade
           ? normalizeUsTrade(frame, this.#options.venue ?? "NASDAQ")
+          : frame.trId === KIS_TR.domesticUnifiedTrade
+          ? normalizeUnifiedDomesticTrade(frame)
           : frame.trId === KIS_TR.domesticNxtTrade
-          ? normalizeNxtTrade(frame)
+            ? normalizeNxtTrade(frame)
           : normalizeDomesticTrade(frame);
       for (const tick of ticks) {
         const canonicalTick = {

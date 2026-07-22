@@ -94,6 +94,15 @@ describe("KisDomesticInvestorFlowClient", () => {
   });
 
   it("normalizes completed stock investor rows without inventing zero values", async () => {
+    const providerRow = {
+      ...stockInvestorRow,
+      prsn_shnu_vol: "001000",
+      prsn_ntby_qty: "+0",
+      prsn_seln_vol: "001000",
+      prsn_shnu_tr_pbmn: "070000000",
+      prsn_ntby_tr_pbmn: "+0",
+      prsn_seln_tr_pbmn: "070000000",
+    };
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: unknown, init?: RequestInit) => {
@@ -105,7 +114,7 @@ describe("KisDomesticInvestorFlowClient", () => {
         expect(url.searchParams.get("FID_COND_MRKT_DIV_CODE")).toBe("J");
         expect(url.searchParams.get("FID_INPUT_ISCD")).toBe("005930");
         expect(new Headers(init?.headers).get("tr_id")).toBe("FHKST01010900");
-        return new Response(JSON.stringify({ rt_cd: "0", output: [stockInvestorRow] }));
+        return new Response(JSON.stringify({ rt_cd: "0", output: [providerRow] }));
       }),
     );
 
@@ -118,7 +127,12 @@ describe("KisDomesticInvestorFlowClient", () => {
     });
     expect(result.rows[0]).toMatchObject({
       businessDate: "20260720",
-      individual: { netBuyQuantity: "-120" },
+      individual: {
+        buyQuantity: "1000",
+        netBuyQuantity: "0",
+        buyAmount: "70000000",
+        netBuyAmount: "0",
+      },
       foreign: { netBuyAmount: "5600000" },
       institution: { buyQuantity: "400" },
     });

@@ -9,6 +9,7 @@ import type {
   DesktopInstrumentSearchProjection,
   DesktopMarketContextProjection,
   DesktopMarketCalendarProjection,
+  DesktopPaperCancelRequest,
   DesktopPaperOrderRequest,
   DesktopPaperOrderResult,
   DesktopRankingProjection,
@@ -104,6 +105,9 @@ declare global {
     readonly paper: {
       readonly submit: (
         request: Readonly<DesktopPaperOrderRequest>,
+      ) => Promise<Readonly<DesktopPaperOrderResult>>;
+      readonly cancel: (
+        request: Readonly<DesktopPaperCancelRequest>,
       ) => Promise<Readonly<DesktopPaperOrderResult>>;
       readonly onAccountProjection: (
         listener: (projection: Readonly<DesktopAccountProjection>) => void,
